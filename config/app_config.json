@@ -50,8 +50,8 @@
     "fft_max_freq_hz": null        
   },
   "data_compression": {
-    "format": "msgpack",            
-    "use_zlib": true               
+    "format": "json",            
+    "use_zlib": false               
   },
-  "mock_data": true  
+  "mock_data": false  
 }

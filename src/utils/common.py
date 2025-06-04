@@ -1,6 +1,10 @@
 import json
 import os
 from pathlib import Path
+import random
+from typing import Dict, Any
+import numpy as np
+PACKET_TYPE_ACC = 0x01  # Giả sử đây là mã loại gói dữ liệu gia tốc
 
 def load_config(file_path: str) -> dict:
     """
@@ -62,3 +66,26 @@ def hex_string_to_bytes(hex_str: str) -> bytes:
         bytes: Chuỗi bytes tương ứng.
     """
     return bytes.fromhex(hex_str)
+
+def generate_mock_acc_data(time_elapsed: float) -> Dict[str, Any]:
+    """
+    Tạo một gói dữ liệu gia tốc giả lập (tương tự như từ HWT905DataDecoder).
+    """
+    # Gia tốc (dao động xung quanh 0, trục Z xung quanh 1g)
+    acc_x = 0.1 * np.sin(2 * np.pi * 1 * time_elapsed) + random.uniform(-0.01, 0.01)
+    acc_y = 0.05 * np.cos(2 * np.pi * 0.5 * time_elapsed) + random.uniform(-0.01, 0.01)
+    acc_z = 1.0 + 0.02 * np.sin(2 * np.pi * 2 * time_elapsed) + random.uniform(-0.01, 0.01)
+    
+    # Mô phỏng cấu trúc trả về của data_decoder
+    return {
+        "raw_packet": b'', # Giả lập gói raw
+        "header": 0x55,
+        "type": PACKET_TYPE_ACC,
+        "type_name": "ACCELERATION",
+        "payload": b'',
+        "checksum": 0x00,
+        "acc_x": acc_x,
+        "acc_y": acc_y,
+        "acc_z": acc_z,
+        "temperature": 25.0 + random.uniform(-1,1),
+    }

@@ -1,5 +1,3 @@
-# src/mqtt/mqtt_client.py
-
 import paho.mqtt.client as paho
 import logging
 import time

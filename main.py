@@ -1,14 +1,12 @@
-# main.py
-
 import logging
 import time
 import json
 import threading
-import random # Để tạo dữ liệu giả lập
-import numpy as np # Để tạo dữ liệu giả lập và các mảng
+import random 
+import numpy as np
 
 # Import các module và lớp cần thiết
-from src.utils.common import load_config
+from src.utils.common import load_config, generate_mock_acc_data
 from src.utils.logger_setup import setup_logging
 from src.sensors.hwt905_config_manager import HWT905ConfigManager
 from src.sensors.hwt905_data_decoder import HWT905DataDecoder
@@ -26,29 +24,6 @@ from typing import Optional, Dict, Any
 
 # Cờ để điều khiển vòng lặp chính
 _running_flag = threading.Event()
-
-def _generate_mock_acc_data(time_elapsed: float) -> Dict[str, Any]:
-    """
-    Tạo một gói dữ liệu gia tốc giả lập (tương tự như từ HWT905DataDecoder).
-    """
-    # Gia tốc (dao động xung quanh 0, trục Z xung quanh 1g)
-    acc_x = 0.1 * np.sin(2 * np.pi * 1 * time_elapsed) + random.uniform(-0.01, 0.01)
-    acc_y = 0.05 * np.cos(2 * np.pi * 0.5 * time_elapsed) + random.uniform(-0.01, 0.01)
-    acc_z = 1.0 + 0.02 * np.sin(2 * np.pi * 2 * time_elapsed) + random.uniform(-0.01, 0.01)
-    
-    # Mô phỏng cấu trúc trả về của data_decoder
-    return {
-        "raw_packet": b'', # Giả lập gói raw
-        "header": 0x55,
-        "type": PACKET_TYPE_ACC,
-        "type_name": "ACCELERATION",
-        "payload": b'',
-        "checksum": 0x00,
-        "acc_x": acc_x,
-        "acc_y": acc_y,
-        "acc_z": acc_z,
-        "temperature": 25.0 + random.uniform(-1,1),
-    }
 
 def _main_loop_thread(config_manager: Optional[HWT905ConfigManager], 
                       data_decoder: Optional[HWT905DataDecoder], 
@@ -74,7 +49,7 @@ def _main_loop_thread(config_manager: Optional[HWT905ConfigManager],
             packet_info = None
             if use_mock_data:
                 # Tạo dữ liệu giả lập
-                packet_info = _generate_mock_acc_data(mock_time_elapsed)
+                packet_info = generate_mock_acc_data(mock_time_elapsed)
                 mock_time_elapsed += mock_interval_s
                 time.sleep(mock_interval_s) # Giả lập độ trễ nhận data
             else:
@@ -227,8 +202,8 @@ def main():
                 if config_manager.factory_reset():
                     logger.info("Factory Reset thành công. Đang kết nối lại với baudrate mặc định (9600).")
                     config_manager.close()
-                    config_manager.baudrate = BAUD_RATE_9600 # Cập nhật baudrate của manager
-                    data_decoder.baudrate = BAUD_RATE_9600 # Cập nhật baudrate của decoder
+                    config_manager.baudrate = BAUD_RATE_9600 
+                    data_decoder.baudrate = BAUD_RATE_9600
                     if not config_manager.connect():
                          logger.critical("Không thể kết nối lại sau Factory Reset. Thoát ứng dụng.")
                          _running_flag.clear()

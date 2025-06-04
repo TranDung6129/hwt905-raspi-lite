@@ -14,7 +14,7 @@ from src.sensors.hwt905_constants import (
     REG_READADDR,
     PACKET_TYPE_READ_REGISTER
 )
-from src.sensors.hwt905_data_decoder import HWT905DataDecoder # Sẽ tạo sau
+from src.sensors.hwt905_data_decoder import HWT905DataDecoder 
 
 # Thiết lập logging cơ bản nếu chưa có handlers
 if not logging.getLogger().hasHandlers():
@@ -411,9 +411,9 @@ class HWT905ConfigManager:
         try:
             # Cố gắng đọc một thanh ghi phổ biến (ví dụ: RSW/MODE) với timeout ngắn
             # Hàm read_current_config sẽ tự động bắt ValueError nếu baudrate mismatch
-            result = self.read_current_config(REG_RSW, timeout_s=0.2)
+            result = self.read_current_config(REG_BAUD, timeout_s=0.2)
             if result is not None:
-                logger.info(f"Baudrate verification succeeded: Read value {hex(result)} from register {hex(REG_RSW)}")
+                logger.info(f"Baudrate verification succeeded: Read value {hex(result)} from register {hex(REG_BAUD)}")
                 return True
             else:
                 logger.warning("Baudrate verification failed: Could not read from register.")
