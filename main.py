@@ -131,8 +131,10 @@ def main():
         app_config["processing"]["dt_sensor_actual"] = 1.0 / target_output_rate #
 
 
-    # 4. Khởi tạo bộ xử lý dữ liệu (SensorDataProcessor)
+    # 4. Khởi tạo bộ xử lý dữ liệu nâng cao (SensorDataProcessor)
     processing_config = app_config["processing"] #
+    storage_config = app_config.get("data_storage", {"enabled": False}) #
+    
     sensor_data_processor = SensorDataProcessor( #
         dt_sensor=processing_config["dt_sensor_actual"], #
         gravity_g=processing_config["gravity_g"], #
@@ -143,7 +145,8 @@ def main():
         rls_filter_q=processing_config["rls_filter_q"], #
         fft_n_points=processing_config["fft_n_points"], #
         fft_min_freq_hz=processing_config["fft_min_freq_hz"], #
-        fft_max_freq_hz=processing_config["fft_max_freq_hz"] #
+        fft_max_freq_hz=processing_config["fft_max_freq_hz"], #
+        storage_config=storage_config #
     )
 
     # 5. Khởi tạo DataCompressor
@@ -192,6 +195,7 @@ def main():
     logger.info("Đang dọn dẹp tài nguyên...")
     if config_manager: #
         config_manager.close() #
+    sensor_data_processor.close() #
     mqtt_client.disconnect() #
     logger.info("Ứng dụng Backend IMU đã dừng.")
 

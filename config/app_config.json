@@ -54,5 +54,14 @@
     "format": "json",            
     "use_zlib": false               
   },
+  "data_storage": {
+    "enabled": true,
+    "immediate_transmission": true,
+    "batch_transmission_size": 50,
+    "base_dir": "data",
+    "format": "csv",
+    "max_file_size_mb": 10.0,
+    "session_prefix": "session"
+  },
   "mock_data": false  
 }

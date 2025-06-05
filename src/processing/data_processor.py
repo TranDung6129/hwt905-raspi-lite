@@ -2,28 +2,31 @@
 
 import numpy as np
 import logging
+import time
 from collections import deque
 from typing import Dict, Any, Optional
 
-from src.processing.algorithms.rls_integrator import RLSIntegrator
-from src.processing.algorithms.fft_analyzer import FFTAnalyzer
-from src.processing.data_filter import MovingAverageFilter, LowPassFilter # Import các bộ lọc mới
-# data_compressor sẽ được dùng ở main.py hoặc lớp điều phối cuối cùng trước MQTT
+from .algorithms.rls_integrator import RLSIntegrator
+from .algorithms.fft_analyzer import FFTAnalyzer
+from .data_filter import MovingAverageFilter, LowPassFilter
+from .data_storage import StorageManager
 
 logger = logging.getLogger(__name__)
 
 class SensorDataProcessor:
     """
-    Lớp điều phối việc xử lý dữ liệu gia tốc từ cảm biến.
+    Lớp điều phối việc xử lý dữ liệu gia tốc từ cảm biến với khả năng lưu trữ.
     Bao gồm tiền xử lý, lọc (data_filter), tích hợp gia tốc (algorithm/rls_integrator),
-    và phân tích FFT (algorithm/fft_analyzer).
+    phân tích FFT (algorithm/fft_analyzer), và lưu trữ dữ liệu.
+    Tách biệt việc tính toán và truyền dữ liệu để hỗ trợ môi trường kết nối gián đoạn.
     """
     
     def __init__(self, dt_sensor: float, gravity_g: float,
                  acc_filter_type: Optional[str] = None, acc_filter_param: Optional[Any] = None,
                  rls_sample_frame_size: int = 20, rls_calc_frame_multiplier: int = 100,
                  rls_filter_q: float = 0.9825,
-                 fft_n_points: int = 512, fft_min_freq_hz: float = 0.1, fft_max_freq_hz: float = None):
+                 fft_n_points: int = 512, fft_min_freq_hz: float = 0.1, fft_max_freq_hz: float = None,
+                 storage_config: Optional[Dict[str, Any]] = None):
         """
         Khởi tạo SensorDataProcessor.
         
@@ -38,6 +41,7 @@ class SensorDataProcessor:
             fft_n_points (int): Số điểm cho mỗi lần tính FFT.
             fft_min_freq_hz (float): Tần số thấp nhất cho FFT.
             fft_max_freq_hz (float): Tần số cao nhất cho FFT.
+            storage_config (Dict): Cấu hình cho hệ thống lưu trữ dữ liệu.
         """
         self.dt_sensor = dt_sensor
         self.gravity_g = gravity_g
@@ -89,6 +93,12 @@ class SensorDataProcessor:
 
         self.rls_sample_frame_size = rls_sample_frame_size # Kích thước frame RLS cho process_new_sample
         
+        # Khởi tạo storage manager
+        if storage_config is None:
+            storage_config = {"enabled": False}
+        
+        self.storage_manager = StorageManager(storage_config)
+        
         logger.info(f"SensorDataProcessor đã khởi tạo với dt_sensor={self.dt_sensor}, gravity_g={self.gravity_g}.")
 
     def _create_acc_filter(self, filter_type: Optional[str], filter_param: Optional[Any]):
@@ -114,7 +124,7 @@ class SensorDataProcessor:
 
     def process_new_sample(self, acc_x_g: float, acc_y_g: float, acc_z_g: float) -> Optional[Dict[str, Any]]:
         """
-        Xử lý một mẫu gia tốc mới (đã nhận từ cảm biến).
+        Xử lý một mẫu gia tốc mới (đã nhận từ cảm biến) với khả năng lưu trữ.
         
         Args:
             acc_x_g (float): Gia tốc trục X (đơn vị g).
@@ -124,7 +134,8 @@ class SensorDataProcessor:
         Returns:
             Optional[Dict[str, Any]]: Một dictionary chứa dữ liệu đã xử lý
             (gia tốc lọc, vận tốc, li độ) và kết quả FFT nếu đủ dữ liệu.
-            Trả về None nếu chưa đủ dữ liệu để xử lý frame hoặc FFT.
+            Trả về dữ liệu để truyền ngay (nếu immediate_transmission=True),
+            None nếu chỉ lưu trữ mà không truyền ngay hoặc chưa đủ dữ liệu để xử lý.
         """
         # 1. Tiền xử lý dữ liệu gia tốc thô và áp dụng bộ lọc ban đầu
         acc_x_ms2_raw = acc_x_g * self.gravity_g
@@ -195,4 +206,54 @@ class SensorDataProcessor:
         else:
             logger.debug(f"Chưa đủ dữ liệu cho RLS Integrator ({len(self.acc_raw_buffer_x)}/{self.rls_sample_frame_size} mẫu).")
 
+        # Enhanced processing: Add storage capabilities and prepare for transmission
+        if processed_output is not None:
+            # Thêm thông tin gia tốc gốc vào kết quả
+            processed_output.update({
+                'acc_x': acc_x_g,
+                'acc_y': acc_y_g,
+                'acc_z': acc_z_g,
+                'displacement_magnitude': self._calculate_displacement_magnitude(processed_output),
+                'overall_dominant_frequency': self._calculate_overall_dominant_frequency(processed_output)
+            })
+            
+            # Lưu trữ và chuẩn bị dữ liệu để truyền
+            current_timestamp = time.time()
+            transmission_data = self.storage_manager.store_and_prepare_for_transmission(
+                processed_output, current_timestamp
+            )
+            
+            return transmission_data
+
         return processed_output
+
+    def _calculate_displacement_magnitude(self, processed_data: Dict[str, Any]) -> float:
+        """Tính độ lớn tổng hợp của displacement."""
+        disp_x = processed_data.get('disp_x', 0)
+        disp_y = processed_data.get('disp_y', 0)
+        disp_z = processed_data.get('disp_z', 0)
+        
+        return (disp_x**2 + disp_y**2 + disp_z**2)**0.5
+    
+    def _calculate_overall_dominant_frequency(self, processed_data: Dict[str, Any]) -> float:
+        """Tính tần số dominant tổng hợp từ 3 trục."""
+        freq_x = processed_data.get('dominant_freq_x', 0)
+        freq_y = processed_data.get('dominant_freq_y', 0)
+        freq_z = processed_data.get('dominant_freq_z', 0)
+        
+        # Trả về tần số có giá trị lớn nhất (có thể cải thiện thuật toán này)
+        return max(freq_x, freq_y, freq_z)
+    
+    def get_batch_for_transmission(self) -> list:
+        """
+        Lấy một batch dữ liệu từ storage để truyền đi trong trường hợp kết nối gián đoạn.
+        
+        Returns:
+            Danh sách dữ liệu cần truyền
+        """
+        return self.storage_manager.get_batch_for_transmission()
+    
+    def close(self):
+        """Đóng processor và dọn dẹp tài nguyên."""
+        self.storage_manager.close()
+        logger.info("SensorDataProcessor closed")
