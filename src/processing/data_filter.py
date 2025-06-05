@@ -91,5 +91,3 @@ class LowPassFilter:
         self.last_filtered_value = 0.0
         self.is_initialized = False
         logger.info("LowPassFilter đã được reset.")
-
-# Bạn có thể thêm các bộ lọc khác ở đây (ví dụ: Median Filter, Kalman Filter đơn giản hóa)

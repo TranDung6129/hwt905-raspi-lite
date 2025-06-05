@@ -3,7 +3,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-class RLSIntegrator: # Đổi tên lớp cho phù hợp
+class RLSIntegrator:
     """
     Tích hợp gia tốc thành vận tốc và vị trí trong thời gian thực
     sử dụng bộ lọc recursive least squares (RLS) để khử nhiễu và trôi dữ liệu.
@@ -38,7 +38,7 @@ class RLSIntegrator: # Đổi tên lớp cho phù hợp
         self.dt = dt
         self.filter_q = filter_q
         
-        # Khởi tạo các buffer tính toán chính (đủ lớn để RLS hoạt động hiệu quả)
+        # Khởi tạo các buffer tính toán chính 
         self.acc_buffer = np.zeros(self.calc_frame_size)
         self.vel_buffer = np.zeros(self.calc_frame_size)
         self.disp_buffer = np.zeros(self.calc_frame_size)
@@ -53,7 +53,7 @@ class RLSIntegrator: # Đổi tên lớp cho phù hợp
         # theta = [slope, intercept]
         self.theta = np.zeros(2) # [0, 0]
         
-        # Số lượng frame cần để "làm ấm" bộ lọc
+        # Số lượng frame cần để khởi động
         self.warmup_frames = 5
         
         logger.info(f"Đã khởi tạo RLSIntegrator: dt={dt}, frame_size={sample_frame_size}, "

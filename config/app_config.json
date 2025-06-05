@@ -15,7 +15,8 @@
     "keepalive": 60,
     "use_tls": false,
     "username": "",
-    "password": ""
+    "password": "",
+    "send_strategy": "continuous" 
   },
   "sensor": {
     "uart_port": "/dev/ttyUSB0",
