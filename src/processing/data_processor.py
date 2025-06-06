@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional
 from .algorithms.rls_integrator import RLSIntegrator
 from .algorithms.fft_analyzer import FFTAnalyzer
 from .data_filter import MovingAverageFilter, LowPassFilter
-from .data_storage import StorageManager
+from ..storage import StorageManager
 
 logger = logging.getLogger(__name__)
 
@@ -163,9 +163,18 @@ class SensorDataProcessor:
             frame_z = np.array(list(self.acc_raw_buffer_z)[-self.rls_sample_frame_size:])
             
             # Xử lý frame gia tốc qua các bộ tích hợp RLS
-            disp_x, vel_x, acc_x_rls_output = self.integrator_x.process_frame(frame_x)
-            disp_y, vel_y, acc_y_rls_output = self.integrator_y.process_frame(frame_y)
-            disp_z, vel_z, acc_z_rls_output = self.integrator_z.process_frame(frame_z)
+            disp_x_array, vel_x_array, acc_x_rls_output = self.integrator_x.process_frame(frame_x)
+            disp_y_array, vel_y_array, acc_y_rls_output = self.integrator_y.process_frame(frame_y)
+            disp_z_array, vel_z_array, acc_z_rls_output = self.integrator_z.process_frame(frame_z)
+
+            # Lấy giá trị cuối cùng (scalar) từ arrays để lưu trữ
+            disp_x = float(disp_x_array[-1]) if len(disp_x_array) > 0 else 0.0
+            disp_y = float(disp_y_array[-1]) if len(disp_y_array) > 0 else 0.0
+            disp_z = float(disp_z_array[-1]) if len(disp_z_array) > 0 else 0.0
+            
+            vel_x = float(vel_x_array[-1]) if len(vel_x_array) > 0 else 0.0
+            vel_y = float(vel_y_array[-1]) if len(vel_y_array) > 0 else 0.0
+            vel_z = float(vel_z_array[-1]) if len(vel_z_array) > 0 else 0.0
 
             # Kiểm tra xem RLS đã đủ làm ấm chưa
             rls_warmed_up = self.integrator_x.frame_count >= self.integrator_x.warmup_frames
@@ -233,6 +242,28 @@ class SensorDataProcessor:
         disp_y = processed_data.get('disp_y', 0)
         disp_z = processed_data.get('disp_z', 0)
         
+        # Đảm bảo là scalar values
+        if hasattr(disp_x, '__len__') and len(disp_x) > 0:
+            disp_x = float(disp_x[-1]) if len(disp_x) > 0 else 0.0
+        elif hasattr(disp_x, '__len__'):
+            disp_x = 0.0
+        else:
+            disp_x = float(disp_x)
+            
+        if hasattr(disp_y, '__len__') and len(disp_y) > 0:
+            disp_y = float(disp_y[-1]) if len(disp_y) > 0 else 0.0
+        elif hasattr(disp_y, '__len__'):
+            disp_y = 0.0
+        else:
+            disp_y = float(disp_y)
+            
+        if hasattr(disp_z, '__len__') and len(disp_z) > 0:
+            disp_z = float(disp_z[-1]) if len(disp_z) > 0 else 0.0
+        elif hasattr(disp_z, '__len__'):
+            disp_z = 0.0
+        else:
+            disp_z = float(disp_z)
+        
         return (disp_x**2 + disp_y**2 + disp_z**2)**0.5
     
     def _calculate_overall_dominant_frequency(self, processed_data: Dict[str, Any]) -> float:
@@ -241,8 +272,16 @@ class SensorDataProcessor:
         freq_y = processed_data.get('dominant_freq_y', 0)
         freq_z = processed_data.get('dominant_freq_z', 0)
         
+        # Đảm bảo là scalar values và xử lý trường hợp None
+        if freq_x is None:
+            freq_x = 0
+        if freq_y is None:
+            freq_y = 0
+        if freq_z is None:
+            freq_z = 0
+            
         # Trả về tần số có giá trị lớn nhất (có thể cải thiện thuật toán này)
-        return max(freq_x, freq_y, freq_z)
+        return max(float(freq_x), float(freq_y), float(freq_z))
     
     def get_batch_for_transmission(self) -> list:
         """
