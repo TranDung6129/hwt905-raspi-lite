@@ -3,6 +3,7 @@
 import csv
 import json
 import logging
+import numpy as np
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -57,50 +58,54 @@ class CSVFileHandler(BaseFileHandler):
     Handler cho file CSV.
     """
     
-    def __init__(self, file_path: Path):
+    def __init__(self, file_path: Path, fields_to_write: Optional[List[str]] = None):
         super().__init__(file_path)
-        self.csv_writer = None
+        self.dict_writer = None
+        self.file_handle = None
+        # Đảm bảo 'timestamp' luôn là cột đầu tiên nếu fields_to_write được sử dụng
+        if fields_to_write:
+            self.fields_to_write = ['timestamp'] + [f for f in fields_to_write if f != 'timestamp']
+        else:
+            self.fields_to_write = None
         self.header_written = False
     
     def open_for_writing(self):
         """Mở file CSV để ghi."""
-        self.file_handle = open(self.file_path, 'w', newline='', encoding='utf-8')
-        self.csv_writer = csv.writer(self.file_handle)
-        self._write_header()
-        logger.debug(f"Opened CSV file for writing: {self.file_path}")
-    
-    def _write_header(self):
-        """Viết header cho file CSV."""
-        header = [
-            'timestamp', 'acc_x', 'acc_y', 'acc_z',
-            'disp_x', 'disp_y', 'disp_z', 'disp_magnitude',
-            'dominant_freq_x', 'dominant_freq_y', 'dominant_freq_z', 'overall_dominant_freq',
-            'rls_warmed_up'
-        ]
-        self.csv_writer.writerow(header)
-        self.header_written = True
+        try:
+            self.file_handle = open(self.file_path, 'w', newline='', encoding='utf-8')
+            # DictWriter sẽ được khởi tạo khi có dữ liệu đầu tiên để xác định header
+        except IOError as e:
+            logger.error(f"Failed to open CSV file for writing {self.file_path}: {e}")
+            raise
     
     def write_data(self, data: Dict[str, Any], timestamp: float):
         """Ghi dữ liệu vào file CSV."""
-        if not self.csv_writer:
-            raise RuntimeError("File not opened for writing")
+        if not self.file_handle:
+            logger.warning("Attempted to write to a closed or non-existent CSV file.")
+            return
         
-        row = [
-            timestamp,
-            data.get('acc_x', 0),
-            data.get('acc_y', 0),
-            data.get('acc_z', 0),
-            data.get('disp_x', 0),
-            data.get('disp_y', 0),
-            data.get('disp_z', 0),
-            data.get('displacement_magnitude', 0),
-            data.get('dominant_freq_x', 0),
-            data.get('dominant_freq_y', 0),
-            data.get('dominant_freq_z', 0),
-            data.get('overall_dominant_frequency', 0),
-            data.get('rls_warmed_up', False)
-        ]
-        self.csv_writer.writerow(row)
+        full_data = {'timestamp': timestamp, **data}
+
+        # Chuyển đổi các giá trị là list/numpy array thành chuỗi JSON trước khi ghi
+        processed_data = {}
+        for key, value in full_data.items():
+            if isinstance(value, (list, tuple, np.ndarray)):
+                processed_data[key] = json.dumps(value.tolist() if isinstance(value, np.ndarray) else value)
+            else:
+                processed_data[key] = value
+
+        try:
+            if not self.header_written:
+                # Xác định header: ưu tiên fields_to_write, sau đó là các khóa của dữ liệu
+                header = self.fields_to_write if self.fields_to_write else list(processed_data.keys())
+                self.dict_writer = csv.DictWriter(self.file_handle, fieldnames=header, extrasaction='ignore')
+                self.dict_writer.writeheader()
+                self.header_written = True
+
+            # Ghi dòng dữ liệu. extrasaction='ignore' sẽ bỏ qua các key không có trong header.
+            self.dict_writer.writerow(processed_data)
+        except Exception as e:
+            logger.error(f"Error writing data to CSV file {self.file_path}: {e}")
     
     def read_data(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Đọc dữ liệu từ file CSV."""
@@ -182,20 +187,22 @@ class JSONFileHandler(BaseFileHandler):
         return data
 
 
-def create_file_handler(file_path: Path, storage_format: str) -> BaseFileHandler:
+def create_file_handler(file_path: Path, file_format: str, **kwargs) -> BaseFileHandler:
     """
     Factory function để tạo file handler phù hợp.
     
     Args:
         file_path: Đường dẫn đến file
-        storage_format: Định dạng lưu trữ ('csv' hoặc 'json')
+        file_format: Định dạng lưu trữ ('csv' hoặc 'json')
+        **kwargs: Các tham số tùy chọn
         
     Returns:
         Instance của file handler tương ứng
     """
-    if storage_format.lower() == "csv":
-        return CSVFileHandler(file_path)
-    elif storage_format.lower() == "json":
+    file_format = file_format.lower()
+    if file_format == "csv":
+        return CSVFileHandler(file_path, fields_to_write=kwargs.get('fields_to_write'))
+    elif file_format == "json":
         return JSONFileHandler(file_path)
     else:
-        raise ValueError(f"Unsupported storage format: {storage_format}")
+        raise ValueError(f"Unsupported file format: {file_format}")

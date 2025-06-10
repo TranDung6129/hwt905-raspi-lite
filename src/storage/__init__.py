@@ -1,14 +1,16 @@
 # src/storage/__init__.py
 
-from .storage_manager import StorageManager
-from .data_storage import ProcessedDataStorage
-from .file_handlers import CSVFileHandler, JSONFileHandler
+from .data_storage import DataStorage
 from .session_manager import SessionManager
+from .file_handlers import (
+    BaseFileHandler, CSVFileHandler, JSONFileHandler, create_file_handler
+)
 
 __all__ = [
-    'StorageManager',
-    'ProcessedDataStorage', 
+    'DataStorage',
+    'SessionManager',
+    'BaseFileHandler',
     'CSVFileHandler',
     'JSONFileHandler',
-    'SessionManager'
+    'create_file_handler'
 ]

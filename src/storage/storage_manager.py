@@ -3,7 +3,7 @@
 import logging
 from typing import Dict, Any, List, Optional
 
-from .data_storage import ProcessedDataStorage
+from .data_storage import DataStorage
 
 logger = logging.getLogger(__name__)
 
@@ -13,35 +13,45 @@ class StorageManager:
     Tích hợp với luồng xử lý hiện tại để hỗ trợ lưu trữ trong môi trường kết nối gián đoạn.
     """
     
-    def __init__(self, storage_config: Dict[str, Any]):
+    def __init__(self, storage_config: Dict[str, Any], 
+                 data_type: str = "processed",
+                 fields_to_write: Optional[List[str]] = None):
         """
         Khởi tạo StorageManager.
         
         Args:
             storage_config: Cấu hình cho storage system
+            data_type: Loại dữ liệu ('processed' hoặc 'decoded') để xác định thư mục con.
+            fields_to_write: Danh sách các cột cụ thể để ghi (cho CSV).
         """
         self.storage_enabled = storage_config.get("enabled", True)
         self.immediate_transmission = storage_config.get("immediate_transmission", True)
         self.batch_transmission_size = storage_config.get("batch_transmission_size", 50)
+        self.data_type = data_type
         
         if self.storage_enabled:
-            self.data_storage = ProcessedDataStorage(
+            # Tạo thư mục con dựa trên data_type
+            sub_dir = f"{self.data_type}_data"
+            
+            self.data_storage = DataStorage(
                 base_data_dir=storage_config.get("base_dir", "data"),
+                sub_dir=sub_dir,
                 storage_format=storage_config.get("format", "csv"),
                 max_file_size_mb=storage_config.get("max_file_size_mb", 10.0),
-                session_prefix=storage_config.get("session_prefix", "session")
+                session_prefix=storage_config.get("session_prefix", "session"),
+                fields_to_write=fields_to_write
             )
         else:
             self.data_storage = None
         
-        logger.info(f"StorageManager initialized - Enabled: {self.storage_enabled}, Immediate transmission: {self.immediate_transmission}")
+        logger.info(f"StorageManager initialized for '{self.data_type}' - Enabled: {self.storage_enabled}, Immediate transmission: {self.immediate_transmission}")
     
-    def store_and_prepare_for_transmission(self, processed_data: Dict[str, Any], timestamp: float = None) -> Optional[Dict[str, Any]]:
+    def store_and_prepare_for_transmission(self, data: Dict[str, Any], timestamp: float = None) -> Optional[Dict[str, Any]]:
         """
         Lưu trữ dữ liệu và chuẩn bị cho việc truyền.
         
         Args:
-            processed_data: Dữ liệu đã xử lý
+            data: Dữ liệu (đã xử lý hoặc đã giải mã)
             timestamp: Timestamp (sử dụng thời gian hiện tại nếu None)
             
         Returns:
@@ -49,11 +59,11 @@ class StorageManager:
         """
         # Luôn lưu trữ nếu storage được bật
         if self.storage_enabled and self.data_storage:
-            self.data_storage.store_processed_data(processed_data, timestamp)
+            self.data_storage.store_data(data, timestamp)
         
         # Trả về dữ liệu để truyền ngay nếu được cấu hình
         if self.immediate_transmission:
-            return processed_data
+            return data
         
         return None
     

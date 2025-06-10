@@ -11,29 +11,34 @@ from .file_handlers import create_file_handler, BaseFileHandler
 
 logger = logging.getLogger(__name__)
 
-class ProcessedDataStorage:
+class DataStorage:
     """
-    Lớp quản lý lưu trữ dữ liệu đã xử lý vào thư mục data.
+    Lớp quản lý lưu trữ dữ liệu vào thư mục data.
     Hỗ trợ lưu trữ liên tục và đọc dữ liệu để truyền đi.
     """
     
-    def __init__(self, base_data_dir: str = "data", 
+    def __init__(self, base_data_dir: str = "data",
+                 sub_dir: str = "processed_data",
                  storage_format: str = "csv",
                  max_file_size_mb: float = 10.0,
-                 session_prefix: str = "session"):
+                 session_prefix: str = "session",
+                 fields_to_write: Optional[List[str]] = None):
         """
-        Khởi tạo ProcessedDataStorage.
+        Khởi tạo DataStorage.
         
         Args:
             base_data_dir: Thư mục gốc để lưu dữ liệu
+            sub_dir: Thư mục con để lưu trữ dữ liệu (vd: 'processed_data', 'decoded_data')
             storage_format: Định dạng lưu trữ ('csv' hoặc 'json')
             max_file_size_mb: Kích thước tối đa của file trước khi tạo file mới
             session_prefix: Tiền tố cho tên session
+            fields_to_write: Danh sách các cột cụ thể để ghi vào file CSV.
         """
         self.base_data_dir = Path(base_data_dir)
-        self.processed_data_dir = self.base_data_dir / "processed_data"
+        self.data_dir = self.base_data_dir / sub_dir
         self.storage_format = storage_format.lower()
         self.max_file_size_bytes = max_file_size_mb * 1024 * 1024
+        self.fields_to_write = fields_to_write
         
         # Khởi tạo session manager
         self.session_manager = SessionManager(session_prefix)
@@ -46,12 +51,12 @@ class ProcessedDataStorage:
         self.current_file_handler = None
         self.data_count_in_current_file = 0
         
-        logger.info(f"ProcessedDataStorage initialized - Session: {self.session_manager.get_current_session()}, Format: {storage_format}")
+        logger.info(f"DataStorage initialized for '{sub_dir}' - Session: {self.session_manager.get_current_session()}, Format: {storage_format}")
     
     def _ensure_directories(self):
         """Tạo các thư mục cần thiết nếu chưa tồn tại."""
-        self.processed_data_dir.mkdir(parents=True, exist_ok=True)
-        logger.debug(f"Ensured directory exists: {self.processed_data_dir}")
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        logger.debug(f"Ensured directory exists: {self.data_dir}")
     
     def _get_file_extension(self) -> str:
         """Lấy phần mở rộng file dựa trên format."""
@@ -67,14 +72,18 @@ class ProcessedDataStorage:
         
         # Tính part number dựa trên số file hiện có
         pattern = f"{current_session}_part*.{self._get_file_extension()}"
-        existing_files = list(self.processed_data_dir.glob(pattern))
+        existing_files = list(self.data_dir.glob(pattern))
         part_number = len(existing_files) + 1
         
         filename = f"{current_session}_part{part_number:03d}_{timestamp}.{self._get_file_extension()}"
-        self.current_file_path = self.processed_data_dir / filename
+        self.current_file_path = self.data_dir / filename
         
-        # Tạo file handler mới
-        self.current_file_handler = create_file_handler(self.current_file_path, self.storage_format)
+        # Tạo file handler mới với các trường được chỉ định
+        self.current_file_handler = create_file_handler(
+            self.current_file_path, 
+            self.storage_format, 
+            fields_to_write=self.fields_to_write
+        )
         self.current_file_handler.open_for_writing()
         
         self.data_count_in_current_file = 0
@@ -98,12 +107,12 @@ class ProcessedDataStorage:
         except OSError:
             return True
     
-    def store_processed_data(self, processed_data: Dict[str, Any], timestamp: float = None):
+    def store_data(self, data: Dict[str, Any], timestamp: float = None):
         """
-        Lưu trữ dữ liệu đã xử lý vào file.
+        Lưu trữ dữ liệu vào file.
         
         Args:
-            processed_data: Dữ liệu đã xử lý từ SensorDataProcessor
+            data: Dữ liệu cần lưu
             timestamp: Timestamp Unix (sử dụng thời gian hiện tại nếu None)
         """
         if timestamp is None:
@@ -115,14 +124,14 @@ class ProcessedDataStorage:
         
         try:
             # Ghi dữ liệu thông qua file handler
-            self.current_file_handler.write_data(processed_data, timestamp)
+            self.current_file_handler.write_data(data, timestamp)
             self.data_count_in_current_file += 1
             
             # Flush dữ liệu để đảm bảo được ghi vào disk
             self.current_file_handler.flush()
                 
         except Exception as e:
-            logger.error(f"Error storing processed data: {e}")
+            logger.error(f"Error storing data: {e}")
     
     def get_stored_data_files(self, session: str = None) -> List[Path]:
         """
@@ -138,7 +147,7 @@ class ProcessedDataStorage:
             session = self.session_manager.get_current_session()
         
         pattern = f"{session}_part*.{self._get_file_extension()}"
-        files = list(self.processed_data_dir.glob(pattern))
+        files = list(self.data_dir.glob(pattern))
         return sorted(files)
     
     def read_stored_data(self, file_path: Path, limit: int = None) -> List[Dict[str, Any]]:
@@ -194,4 +203,4 @@ class ProcessedDataStorage:
     def close(self):
         """Đóng storage và dọn dẹp tài nguyên."""
         self._close_current_file()
-        logger.info(f"ProcessedDataStorage closed - Session: {self.session_manager.get_current_session()}")
+        logger.info(f"DataStorage closed - Session: {self.session_manager.get_current_session()}")

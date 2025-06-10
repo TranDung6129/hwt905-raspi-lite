@@ -102,69 +102,90 @@ class HWT905DataDecoder:
 
     def read_one_packet(self) -> Optional[Dict[str, Any]]:
         """
-        Đọc một gói dữ liệu từ cổng serial và giải mã nó.
-        Sử dụng buffer để xử lý các byte nhận được không theo gói hoàn chỉnh.
+        Đọc một gói dữ liệu thô từ cổng serial, giải mã và trả về.
+        Đây là một hàm tiện ích kết hợp read_raw_packet và decode_raw_packet.
         Returns:
             Dict[str, Any] chứa dữ liệu đã giải mã hoặc thông tin lỗi, hoặc None nếu không có gói hợp lệ.
+        """
+        raw_packet = self.read_raw_packet()
+        if raw_packet:
+            return self.decode_raw_packet(raw_packet)
+        return None
+
+    def read_raw_packet(self) -> Optional[bytes]:
+        """
+        Đọc cho đến khi tìm thấy một gói dữ liệu 11-byte hoàn chỉnh từ cổng serial.
+        Sử dụng buffer để xử lý các byte nhận được không theo gói hoàn chỉnh.
+        Returns:
+            Một gói dữ liệu 11-byte thô, hoặc None nếu không có dữ liệu mới.
         """
         if not self.ser or not self.ser.is_open:
             logger.error("Lỗi đọc gói tin: Kết nối serial chưa được thiết lập hoặc đã đóng.")
             return None
 
-        # Đọc dữ liệu mới vào buffer
         try:
-            new_bytes = self.ser.read(self.ser.in_waiting or 1) # Đọc tất cả byte có sẵn hoặc ít nhất 1 byte
-            if not new_bytes:
-                return None # Không có dữ liệu mới
-            self._packet_buffer += new_bytes
+            # Đọc tất cả các byte đang chờ trong buffer của cổng serial
+            if self.ser.in_waiting > 0:
+                new_bytes = self.ser.read(self.ser.in_waiting)
+                self._packet_buffer += new_bytes
         except serial.SerialException as e:
             logger.error(f"Lỗi serial khi đọc dữ liệu: {e}")
-            self._packet_buffer = b'' # Xóa buffer để tránh dữ liệu hỏng
-            return {"error": "serial_error", "message": str(e)}
+            self._packet_buffer = b''
+            return None
         except Exception as e:
             logger.error(f"Lỗi không xác định khi đọc dữ liệu: {e}")
-            return {"error": "unknown_error", "message": str(e)}
+            return None
+        
+        # Xử lý buffer để tìm một gói tin hoàn chỉnh
+        while True:
+            if len(self._packet_buffer) < DATA_PACKET_LENGTH:
+                # Không đủ dữ liệu trong buffer để tạo thành một gói tin, thoát ra và chờ thêm
+                return None
 
-        # Tìm kiếm và xử lý gói tin trong buffer
-        while len(self._packet_buffer) >= DATA_PACKET_LENGTH:
-            # Tìm byte header
             header_index = self._packet_buffer.find(bytes([DATA_HEADER_BYTE]))
-            
             if header_index == -1:
-                # Không tìm thấy header, xóa toàn bộ buffer
-                logger.debug("Không tìm thấy header byte trong buffer, xóa buffer.")
+                # Không tìm thấy header, buffer này là vô giá trị
                 self._packet_buffer = b''
-                return None # Quay lại chờ thêm dữ liệu
+                return None
             
             if header_index > 0:
-                # Tìm thấy header nhưng có các byte rác ở phía trước
+                # Dọn dẹp các byte rác trước header
                 garbage_bytes = self._packet_buffer[:header_index]
                 self._packet_buffer = self._packet_buffer[header_index:]
                 logger.warning(f"Tìm thấy {len(garbage_bytes)} byte rác trước header: {garbage_bytes.hex().upper()}. Đã xóa.")
-                # Nếu có nhiều byte rác, có thể là baudrate mismatch
-                if len(garbage_bytes) > 50: # Một ngưỡng tùy ý
-                    logger.error("Phát hiện số lượng lớn byte rác. Khả năng cao không khớp baudrate!")
-                    self._packet_buffer = b'' # Xóa buffer
-                    return {"error": "possible_baudrate_mismatch", "raw_bytes": garbage_bytes.hex()}
+                continue # Bắt đầu lại vòng lặp với buffer đã được dọn dẹp
 
-            # Nếu buffer đủ dài để chứa một gói tin tiềm năng
-            if len(self._packet_buffer) >= DATA_PACKET_LENGTH:
-                potential_packet = self._packet_buffer[:DATA_PACKET_LENGTH]
-                
-                if is_valid_data_packet(potential_packet):
-                    self._packet_buffer = self._packet_buffer[DATA_PACKET_LENGTH:] # Xóa gói tin đã xử lý khỏi buffer
-                    return self._decode_packet(potential_packet)
-                else:
-                    # Gói tin không hợp lệ (checksum sai hoặc cấu trúc sai)
-                    # Xóa byte header đầu tiên và thử lại
-                    logger.debug(f"Gói tin không hợp lệ: {potential_packet.hex().upper()}. Xóa byte đầu tiên.")
-                    self._packet_buffer = self._packet_buffer[1:] # Xóa byte đầu tiên (đầu header đã tìm thấy)
-                    # Không return ở đây, mà tiếp tục vòng lặp while để tìm gói tin hợp lệ tiếp theo
+            # Tại đây, buffer bắt đầu bằng một header và đủ dài
+            potential_packet = self._packet_buffer[:DATA_PACKET_LENGTH]
+            
+            # Kiểm tra checksum ngay tại đây để loại bỏ gói tin không hợp lệ sớm
+            if is_valid_data_packet(potential_packet):
+                self._packet_buffer = self._packet_buffer[DATA_PACKET_LENGTH:] # Xóa gói tin đã xử lý
+                return potential_packet # Trả về gói tin hợp lệ
             else:
-                # Buffer chưa đủ dài để chứa gói tin hoàn chỉnh sau khi xử lý byte rác/header
-                return None # Quay lại chờ thêm dữ liệu
+                # Gói tin không hợp lệ, xóa header bị lỗi và thử lại
+                logger.debug(f"Gói tin không hợp lệ (checksum sai): {potential_packet.hex().upper()}. Bỏ qua.")
+                self._packet_buffer = self._packet_buffer[1:]
+                continue
+        
+        return None
 
-        return None # Không có gói tin hoàn chỉnh nào trong buffer
+    def decode_raw_packet(self, raw_packet: bytes) -> Dict[str, Any]:
+        """
+        Giải mã một gói dữ liệu thô đã được đọc. Giả định gói tin đã được xác thực checksum.
+        Args:
+            raw_packet (bytes): Gói dữ liệu 11 byte thô đã được xác thực.
+        Returns:
+            Dict[str, Any]: Dictionary chứa dữ liệu đã giải mã hoặc thông tin lỗi.
+        """
+        # is_valid_data_packet đã được gọi trong read_raw_packet, nhưng có thể gọi lại để an toàn
+        if len(raw_packet) != DATA_PACKET_LENGTH or raw_packet[0] != DATA_HEADER_BYTE:
+             return {
+                "error": "invalid_packet", 
+                "message": "Packet length or header is incorrect for decoding.",
+                "raw_packet": raw_packet
+            }
+        return self._decode_packet(raw_packet)
 
     def _decode_packet(self, packet_bytes: bytes) -> Dict[str, Any]:
         """

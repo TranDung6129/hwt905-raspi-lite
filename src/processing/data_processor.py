@@ -9,7 +9,6 @@ from typing import Dict, Any, Optional
 from .algorithms.rls_integrator import RLSIntegrator
 from .algorithms.fft_analyzer import FFTAnalyzer
 from .data_filter import MovingAverageFilter, LowPassFilter
-from ..storage import StorageManager
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +24,7 @@ class SensorDataProcessor:
                  acc_filter_type: Optional[str] = None, acc_filter_param: Optional[Any] = None,
                  rls_sample_frame_size: int = 20, rls_calc_frame_multiplier: int = 100,
                  rls_filter_q: float = 0.9825,
-                 fft_n_points: int = 512, fft_min_freq_hz: float = 0.1, fft_max_freq_hz: float = None,
-                 storage_config: Optional[Dict[str, Any]] = None):
+                 fft_n_points: int = 512, fft_min_freq_hz: float = 0.1, fft_max_freq_hz: float = None):
         """
         Khởi tạo SensorDataProcessor.
         
@@ -41,7 +39,6 @@ class SensorDataProcessor:
             fft_n_points (int): Số điểm cho mỗi lần tính FFT.
             fft_min_freq_hz (float): Tần số thấp nhất cho FFT.
             fft_max_freq_hz (float): Tần số cao nhất cho FFT.
-            storage_config (Dict): Cấu hình cho hệ thống lưu trữ dữ liệu.
         """
         self.dt_sensor = dt_sensor
         self.gravity_g = gravity_g
@@ -92,12 +89,6 @@ class SensorDataProcessor:
         self.acc_raw_buffer_z = deque(maxlen=max_buffer_len)
 
         self.rls_sample_frame_size = rls_sample_frame_size # Kích thước frame RLS cho process_new_sample
-        
-        # Khởi tạo storage manager
-        if storage_config is None:
-            storage_config = {"enabled": False}
-        
-        self.storage_manager = StorageManager(storage_config)
         
         logger.info(f"SensorDataProcessor đã khởi tạo với dt_sensor={self.dt_sensor}, gravity_g={self.gravity_g}.")
 
@@ -180,9 +171,10 @@ class SensorDataProcessor:
             rls_warmed_up = self.integrator_x.frame_count >= self.integrator_x.warmup_frames
 
             processed_output = {
-                "acc_x_filtered": acc_x_rls_output, # Đây là acc_frame đã được truyền vào RLS
-                "acc_y_filtered": acc_y_rls_output,
-                "acc_z_filtered": acc_z_rls_output,
+                # Chỉ lấy giá trị gia tốc cuối cùng tương ứng với thời điểm tính toán
+                "acc_x_filtered": float(acc_x_rls_output[-1]) if len(acc_x_rls_output) > 0 else 0.0,
+                "acc_y_filtered": float(acc_y_rls_output[-1]) if len(acc_y_rls_output) > 0 else 0.0,
+                "acc_z_filtered": float(acc_z_rls_output[-1]) if len(acc_z_rls_output) > 0 else 0.0,
                 "vel_x": vel_x,
                 "vel_y": vel_y,
                 "vel_z": vel_z,
@@ -226,15 +218,9 @@ class SensorDataProcessor:
                 'overall_dominant_frequency': self._calculate_overall_dominant_frequency(processed_output)
             })
             
-            # Lưu trữ và chuẩn bị dữ liệu để truyền
-            current_timestamp = time.time()
-            transmission_data = self.storage_manager.store_and_prepare_for_transmission(
-                processed_output, current_timestamp
-            )
-            
-            return transmission_data
+            return processed_output
 
-        return processed_output
+        return None
 
     def _calculate_displacement_magnitude(self, processed_data: Dict[str, Any]) -> float:
         """Tính độ lớn tổng hợp của displacement."""
@@ -264,35 +250,17 @@ class SensorDataProcessor:
         else:
             disp_z = float(disp_z)
         
-        return (disp_x**2 + disp_y**2 + disp_z**2)**0.5
+        return np.sqrt(disp_x**2 + disp_y**2 + disp_z**2)
     
     def _calculate_overall_dominant_frequency(self, processed_data: Dict[str, Any]) -> float:
-        """Tính tần số dominant tổng hợp từ 3 trục."""
-        freq_x = processed_data.get('dominant_freq_x', 0)
-        freq_y = processed_data.get('dominant_freq_y', 0)
-        freq_z = processed_data.get('dominant_freq_z', 0)
-        
-        # Đảm bảo là scalar values và xử lý trường hợp None
-        if freq_x is None:
-            freq_x = 0
-        if freq_y is None:
-            freq_y = 0
-        if freq_z is None:
-            freq_z = 0
-            
-        # Trả về tần số có giá trị lớn nhất (có thể cải thiện thuật toán này)
-        return max(float(freq_x), float(freq_y), float(freq_z))
-    
-    def get_batch_for_transmission(self) -> list:
-        """
-        Lấy một batch dữ liệu từ storage để truyền đi trong trường hợp kết nối gián đoạn.
-        
-        Returns:
-            Danh sách dữ liệu cần truyền
-        """
-        return self.storage_manager.get_batch_for_transmission()
-    
+        """Tính tần số trội chung."""
+        dom_freq_x = processed_data.get('dominant_freq_x', 0)
+        dom_freq_y = processed_data.get('dominant_freq_y', 0)
+        dom_freq_z = processed_data.get('dominant_freq_z', 0)
+        return max(dom_freq_x, dom_freq_y, dom_freq_z)
+
     def close(self):
-        """Đóng processor và dọn dẹp tài nguyên."""
-        self.storage_manager.close()
-        logger.info("SensorDataProcessor closed")
+        """Dọn dẹp tài nguyên khi đóng."""
+        logger.info("Closing SensorDataProcessor.")
+        # Không cần làm gì thêm ở đây trừ khi có tài nguyên cần giải phóng
+        pass

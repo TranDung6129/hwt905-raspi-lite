@@ -39,16 +39,20 @@
   "processing": {
     "data_buffer_size": 20,         
     "gravity_g": 9.80665,          
-    "dt_sensor_mock": 0.005,        
     "dt_sensor_actual": 0.005,      
     "acc_filter_type": "low_pass",  
     "acc_filter_param": 0.1,        
     "rls_sample_frame_size": 20,    
-    "rls_calc_frame_multiplier": 50,
+    "rls_calc_frame_multiplier": 2,
     "rls_filter_q": 0.9875,
     "fft_n_points": 512,            
     "fft_min_freq_hz": 0.1,        
     "fft_max_freq_hz": null        
+  },
+  "process_control": {
+    "decoding": true,
+    "processing": false,
+    "mqtt_sending": false
   },
   "data_compression": {
     "format": "json",            
@@ -62,6 +66,5 @@
     "format": "csv",
     "max_file_size_mb": 10.0,
     "session_prefix": "session"
-  },
-  "mock_data": false  
+  }
 }
