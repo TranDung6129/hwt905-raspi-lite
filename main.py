@@ -11,7 +11,7 @@ from src.sensors.hwt905_config_manager import HWT905ConfigManager
 from src.sensors.hwt905_data_decoder import HWT905DataDecoder
 from src.processing.data_processor import SensorDataProcessor
 from src.storage.storage_manager import StorageManager
-from src.core.async_data_manager import SerialReaderThread, ProcessingPipelineThread
+from src.core.async_data_manager import SerialReaderThread, DecoderThread, ProcessorThread
 from src.sensors.hwt905_constants import (
     BAUD_RATE_9600, RATE_OUTPUT_200HZ, RATE_OUTPUT_100HZ, RATE_OUTPUT_50HZ, RATE_OUTPUT_10HZ,
     RSW_ACC_BIT, RSW_GYRO_BIT, RSW_ANGLE_BIT, RSW_MAG_BIT,
@@ -153,30 +153,52 @@ def main():
         )
         if storage_config.get("enabled", False):
             logger.info("Khởi tạo StorageManager cho dữ liệu PROCESSED.")
+            
+            # Chỉ định các cột cần ghi cho file processed_data.csv
+            processed_fields_to_write = [
+                'vel_x', 'vel_y', 'vel_z',
+                'disp_x', 'disp_y', 'disp_z',
+                'dominant_freq_x', 'dominant_freq_y', 'dominant_freq_z'
+            ]
+            
             processed_storage_manager = StorageManager(
                 storage_config,
-                data_type="processed"
-                # fields_to_write là None, sẽ ghi tất cả các trường
+                data_type="processed",
+                fields_to_write=processed_fields_to_write
             )
 
-    # 6. Thiết lập pipeline bất đồng bộ
+    # 6. Thiết lập pipeline bất đồng bộ 3 luồng
     raw_data_queue = Queue(maxsize=8192)
+    decoded_data_queue = Queue(maxsize=8192) if processing_enabled else None
 
+    # Luồng 1: Đọc từ Serial
     reader_thread = SerialReaderThread(data_decoder, raw_data_queue, _running_flag)
     
-    pipeline_thread = ProcessingPipelineThread(
+    # Luồng 2: Giải mã và lưu dữ liệu giải mã
+    decoder_thread = DecoderThread(
         data_decoder=data_decoder,
         raw_data_queue=raw_data_queue,
+        decoded_data_queue=decoded_data_queue,
         running_flag=_running_flag,
-        sensor_data_processor=sensor_data_processor,
-        decoded_storage_manager=decoded_storage_manager,
-        processed_storage_manager=processed_storage_manager
+        decoded_storage_manager=decoded_storage_manager
     )
 
+    # Luồng 3: Xử lý và lưu dữ liệu xử lý (chỉ khởi tạo nếu processing được bật)
+    processor_thread = None
+    if processing_enabled and sensor_data_processor and processed_storage_manager:
+        processor_thread = ProcessorThread(
+            decoded_data_queue=decoded_data_queue,
+            running_flag=_running_flag,
+            sensor_data_processor=sensor_data_processor,
+            processed_storage_manager=processed_storage_manager
+        )
+
     # 7. Chạy các luồng
-    logger.info("Bắt đầu các luồng đọc và xử lý bất đồng bộ...")
+    logger.info("Bắt đầu các luồng đọc, giải mã và xử lý bất đồng bộ...")
     reader_thread.start()
-    pipeline_thread.start()
+    decoder_thread.start()
+    if processor_thread:
+        processor_thread.start()
 
     try:
         # Vòng lặp chính của chương trình chỉ cần giữ cho nó sống và chờ tín hiệu dừng
@@ -190,10 +212,14 @@ def main():
     # 8. Đợi các luồng kết thúc
     logger.info("Đang đợi các luồng kết thúc...")
     reader_thread.join()
-    pipeline_thread.join()
+    decoder_thread.join()
+    if processor_thread:
+        processor_thread.join()
     
     # Đợi cho queue được xử lý hết
     raw_data_queue.join()
+    if decoded_data_queue:
+        decoded_data_queue.join()
     logger.info("Hàng đợi đã được xử lý xong.")
 
     # 9. Dọn dẹp

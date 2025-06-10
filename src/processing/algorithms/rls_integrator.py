@@ -164,20 +164,19 @@ class RLSIntegrator:
         # Tính toán thời gian cho toàn bộ buffer tính toán
         t_buffer = np.arange(0, self.calc_frame_size * self.dt, self.dt)
         
-        # Tích phân gia tốc thô từ buffer thành vận tốc
-        # (initial velocity is implicitly 0 at start of buffer)
+        # Tích phân gia tốc thô từ buffer thành vận tốc bằng NumPy (nhanh hơn vòng lặp Python)
+        integral_kernel_acc = (self.acc_buffer[:-1] + self.acc_buffer[1:]) * self.dt / 2
         vel_raw_buffer = np.zeros_like(self.acc_buffer)
-        for i in range(1, self.calc_frame_size):
-            vel_raw_buffer[i] = vel_raw_buffer[i-1] + (self.acc_buffer[i-1] + self.acc_buffer[i]) * self.dt / 2
+        vel_raw_buffer[1:] = np.cumsum(integral_kernel_acc)
         
         # Loại bỏ xu hướng tuyến tính khỏi vận tốc bằng RLS
         vel_detrended_buffer = self._remove_linear_trend_rls(vel_raw_buffer, t_buffer)
         
-        # Tích phân vận tốc đã khử xu hướng thành vị trí
+        # Tích phân vận tốc đã khử xu hướng thành vị trí bằng NumPy
+        integral_kernel_vel = (vel_detrended_buffer[:-1] + vel_detrended_buffer[1:]) * self.dt / 2
         disp_raw_buffer = np.zeros_like(vel_detrended_buffer)
-        for i in range(1, self.calc_frame_size):
-            disp_raw_buffer[i] = disp_raw_buffer[i-1] + (vel_detrended_buffer[i-1] + vel_detrended_buffer[i]) * self.dt / 2
-        
+        disp_raw_buffer[1:] = np.cumsum(integral_kernel_vel)
+
         # Loại bỏ xu hướng tuyến tính khỏi vị trí bằng RLS
         disp_detrended_buffer = self._remove_linear_trend_rls(disp_raw_buffer, t_buffer)
         
