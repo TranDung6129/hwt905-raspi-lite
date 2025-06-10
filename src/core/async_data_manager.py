@@ -4,13 +4,31 @@ import logging
 import time
 from queue import Queue, Empty
 from typing import Optional
+import numpy as np
 
 from ..sensors.hwt905_data_decoder import HWT905DataDecoder
 from ..storage.storage_manager import StorageManager
 from ..processing.data_processor import SensorDataProcessor
 from ..sensors.hwt905_constants import PACKET_TYPE_ACC
+from ..mqtt.publisher_factory import get_publisher
+from ..mqtt.batch_publisher import BatchPublisher
 
 logger = logging.getLogger(__name__)
+
+def convert_numpy_to_native(data):
+    """
+    Hàm đệ quy để chuyển đổi tất cả các giátrị numpy.ndarray hoặc numpy number
+    trong một cấu trúc dữ liệu (dict, list) thành kiểu dữ liệu gốc của Python.
+    """
+    if isinstance(data, dict):
+        return {k: convert_numpy_to_native(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [convert_numpy_to_native(i) for i in data]
+    elif isinstance(data, np.ndarray):
+        return data.tolist()
+    elif isinstance(data, (np.generic, np.number)):
+        return data.item()
+    return data
 
 class SerialReaderThread(threading.Thread):
     """
@@ -139,19 +157,21 @@ class DecoderThread(threading.Thread):
 
 class ProcessorThread(threading.Thread):
     """
-    Luồng chuyên lấy dữ liệu đã giải mã từ hàng đợi, xử lý
-    và lưu trữ kết quả đã xử lý.
+    Luồng chuyên lấy dữ liệu đã giải mã từ hàng đợi, xử lý,
+    lưu trữ kết quả và đẩy vào hàng đợi MQTT (nếu được kích hoạt).
     """
     def __init__(self, 
                  decoded_data_queue: Queue,
                  running_flag: threading.Event,
                  sensor_data_processor: SensorDataProcessor,
-                 processed_storage_manager: Optional[StorageManager] = None):
+                 processed_storage_manager: Optional[StorageManager] = None,
+                 mqtt_queue: Optional[Queue] = None):
         super().__init__(daemon=True, name="ProcessorThread")
         self.decoded_data_queue = decoded_data_queue
         self.running_flag = running_flag
         self.sensor_data_processor = sensor_data_processor
         self.processed_storage_manager = processed_storage_manager
+        self.mqtt_queue = mqtt_queue
         
         self.processed_packet_count = 0
         self.last_log_time = time.time()
@@ -174,11 +194,34 @@ class ProcessorThread(threading.Thread):
                 processed_results = self.sensor_data_processor.process_new_sample(
                     acc_data['acc_x'], acc_data['acc_y'], acc_data['acc_z']
                 )
-                
-                # 2. Lưu dữ liệu đã xử lý (nếu có kết quả và được cấu hình)
-                if processed_results and self.processed_storage_manager:
+
+                # Nếu có kết quả, tiếp tục xử lý
+                if processed_results:
                     self.processed_packet_count += 1
-                    self.processed_storage_manager.store_and_prepare_for_transmission(processed_results, timestamp)
+                    
+                    # 2. Thêm timestamp vào kết quả
+                    processed_results['ts'] = timestamp
+
+                    # 3. Lưu dữ liệu đã xử lý (nếu được cấu hình)
+                    if self.processed_storage_manager:
+                        self.processed_storage_manager.store_and_prepare_for_transmission(processed_results, timestamp)
+
+                    # 4. Đẩy vào hàng đợi MQTT (nếu được cấu hình)
+                    if self.mqtt_queue:
+                        # Chuyển đổi tất cả các giá trị numpy sang kiểu Python gốc
+                        native_data = convert_numpy_to_native(processed_results)
+                        
+                        # Tạo payload MQTT chỉ chứa các trường cần thiết
+                        mqtt_payload = {
+                            'ts': native_data.get('ts'),
+                            'disp_x': native_data.get('disp_x'),
+                            'disp_y': native_data.get('disp_y'),
+                            'disp_z': native_data.get('disp_z'),
+                            'dominant_freq_x': native_data.get('dominant_freq_x'),
+                            'dominant_freq_y': native_data.get('dominant_freq_y'),
+                            'dominant_freq_z': native_data.get('dominant_freq_z'),
+                        }
+                        self.mqtt_queue.put(mqtt_payload)
                 
                 self.decoded_data_queue.task_done()
 
@@ -186,7 +229,10 @@ class ProcessorThread(threading.Thread):
                 current_time = time.time()
                 if current_time - self.last_log_time >= 5.0:
                     process_rate = self.processed_packet_count / (current_time - self.last_log_time)
-                    logger.info(f"[Processor] Tốc độ: {process_rate:.2f} packets/s. Queue size: {self.decoded_data_queue.qsize()}")
+                    q_info = f"Queue decoded: {self.decoded_data_queue.qsize()}"
+                    if self.mqtt_queue:
+                        q_info += f", mqtt: {self.mqtt_queue.qsize()}"
+                    logger.info(f"[Processor] Tốc độ: {process_rate:.2f} packets/s. {q_info}")
                     self.processed_packet_count = 0
                     self.last_log_time = current_time
 
@@ -198,5 +244,65 @@ class ProcessorThread(threading.Thread):
             except Exception as e:
                 logger.error(f"[Processor] Lỗi trong luồng Processor: {e}", exc_info=True)
                 self.running_flag.clear()
+        
+        # Báo hiệu cho luồng MQTT rằng không còn dữ liệu mới
+        if self.mqtt_queue:
+            self.mqtt_queue.put(None)
                 
-        logger.info("Luồng Xử lý (ProcessorThread) đã dừng.") 
+        logger.info("Luồng Xử lý (ProcessorThread) đã dừng.")
+
+
+class MqttPublisherThread(threading.Thread):
+    """
+    Luồng chuyên lấy dữ liệu đã xử lý từ hàng đợi và gửi qua MQTT.
+    """
+    def __init__(self, mqtt_queue: Queue, running_flag: threading.Event):
+        super().__init__(daemon=True, name="MqttPublisherThread")
+        self.mqtt_queue = mqtt_queue
+        self.running_flag = running_flag
+        self.publisher = get_publisher()
+        self.sent_packet_count = 0
+        self.last_log_time = time.time()
+
+    def run(self):
+        if not self.publisher:
+            logger.error("[MQTT Publisher] Không thể khởi tạo publisher. Luồng đang dừng.")
+            return
+
+        self.publisher.connect()
+        logger.info("Luồng MQTT Publisher đã bắt đầu.")
+
+        while self.running_flag.is_set() or not self.mqtt_queue.empty():
+            try:
+                processed_data = self.mqtt_queue.get(timeout=1)
+
+                if processed_data is None:
+                    logger.info("[MQTT Publisher] Nhận được tín hiệu kết thúc từ Processor.")
+                    break
+                
+                self.publisher.publish(processed_data)
+                self.sent_packet_count += 1
+                self.mqtt_queue.task_done()
+
+                # Ghi log định kỳ
+                current_time = time.time()
+                if current_time - self.last_log_time >= 5.0:
+                    send_rate = self.sent_packet_count / (current_time - self.last_log_time)
+                    logger.info(f"[MQTT Publisher] Tốc độ gửi: {send_rate:.2f} packets/s. Queue size: {self.mqtt_queue.qsize()}")
+                    self.sent_packet_count = 0
+                    self.last_log_time = current_time
+
+            except Empty:
+                if not self.running_flag.is_set():
+                    logger.info("Hàng đợi MQTT trống và cờ đã tắt, thoát luồng Publisher.")
+                    break
+                continue
+            except Exception as e:
+                logger.error(f"[MQTT Publisher] Lỗi trong luồng Publisher: {e}", exc_info=True)
+        
+        # Gửi nốt dữ liệu còn lại trong buffer (nếu là batch mode)
+        if isinstance(self.publisher, BatchPublisher):
+            self.publisher.flush()
+            
+        self.publisher.disconnect()
+        logger.info("Luồng MQTT Publisher đã dừng.") 

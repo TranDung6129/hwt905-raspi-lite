@@ -197,12 +197,19 @@ class SensorDataProcessor:
                 freqs_y, amps_y, dom_freq_y = self.fft_analyzer.analyze(fft_segment_y)
                 freqs_z, amps_z, dom_freq_z = self.fft_analyzer.analyze(fft_segment_z)
 
+                # Chỉ cập nhật các giá trị tần số chủ đạo, không gửi toàn bộ mảng FFT
                 processed_output.update({
-                    "fft_x_freqs": freqs_x, "fft_x_amps": amps_x, "dominant_freq_x": dom_freq_x,
-                    "fft_y_freqs": freqs_y, "fft_y_amps": amps_y, "dominant_freq_y": dom_freq_y,
-                    "fft_z_freqs": freqs_z, "fft_z_amps": amps_z, "dominant_freq_z": dom_freq_z
+                    "dominant_freq_x": dom_freq_x,
+                    "dominant_freq_y": dom_freq_y,
+                    "dominant_freq_z": dom_freq_z
                 })
             else:
+                # Nếu không đủ dữ liệu FFT, trả về giá trị mặc định
+                processed_output.update({
+                    "dominant_freq_x": 0.0,
+                    "dominant_freq_y": 0.0,
+                    "dominant_freq_z": 0.0
+                })
                 logger.debug(f"Chưa đủ dữ liệu cho FFT ({len(self.acc_raw_buffer_x)}/{self.fft_analyzer.n_fft_points} mẫu).")
         else:
             logger.debug(f"Chưa đủ dữ liệu cho RLS Integrator ({len(self.acc_raw_buffer_x)}/{self.rls_sample_frame_size} mẫu).")

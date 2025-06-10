@@ -11,7 +11,7 @@ from src.sensors.hwt905_config_manager import HWT905ConfigManager
 from src.sensors.hwt905_data_decoder import HWT905DataDecoder
 from src.processing.data_processor import SensorDataProcessor
 from src.storage.storage_manager import StorageManager
-from src.core.async_data_manager import SerialReaderThread, DecoderThread, ProcessorThread
+from src.core.async_data_manager import SerialReaderThread, DecoderThread, ProcessorThread, MqttPublisherThread
 from src.sensors.hwt905_constants import (
     BAUD_RATE_9600, RATE_OUTPUT_200HZ, RATE_OUTPUT_100HZ, RATE_OUTPUT_50HZ, RATE_OUTPUT_10HZ,
     RSW_ACC_BIT, RSW_GYRO_BIT, RSW_ANGLE_BIT, RSW_MAG_BIT,
@@ -167,9 +167,10 @@ def main():
                 fields_to_write=processed_fields_to_write
             )
 
-    # 6. Thiết lập pipeline bất đồng bộ 3 luồng
+    # 6. Thiết lập pipeline bất đồng bộ 3 (hoặc 4) luồng
     raw_data_queue = Queue(maxsize=8192)
     decoded_data_queue = Queue(maxsize=8192) if processing_enabled else None
+    mqtt_queue = Queue(maxsize=8192) if mqtt_sending_enabled else None
 
     # Luồng 1: Đọc từ Serial
     reader_thread = SerialReaderThread(data_decoder, raw_data_queue, _running_flag)
@@ -185,12 +186,21 @@ def main():
 
     # Luồng 3: Xử lý và lưu dữ liệu xử lý (chỉ khởi tạo nếu processing được bật)
     processor_thread = None
-    if processing_enabled and sensor_data_processor and processed_storage_manager:
+    if processing_enabled and sensor_data_processor:
         processor_thread = ProcessorThread(
             decoded_data_queue=decoded_data_queue,
             running_flag=_running_flag,
             sensor_data_processor=sensor_data_processor,
-            processed_storage_manager=processed_storage_manager
+            processed_storage_manager=processed_storage_manager,
+            mqtt_queue=mqtt_queue
+        )
+
+    # Luồng 4: Gửi dữ liệu qua MQTT (chỉ khởi tạo nếu được bật)
+    mqtt_publisher_thread = None
+    if mqtt_sending_enabled and mqtt_queue:
+        mqtt_publisher_thread = MqttPublisherThread(
+            mqtt_queue=mqtt_queue,
+            running_flag=_running_flag
         )
 
     # 7. Chạy các luồng
@@ -199,6 +209,8 @@ def main():
     decoder_thread.start()
     if processor_thread:
         processor_thread.start()
+    if mqtt_publisher_thread:
+        mqtt_publisher_thread.start()
 
     try:
         # Vòng lặp chính của chương trình chỉ cần giữ cho nó sống và chờ tín hiệu dừng
@@ -215,11 +227,15 @@ def main():
     decoder_thread.join()
     if processor_thread:
         processor_thread.join()
+    if mqtt_publisher_thread:
+        mqtt_publisher_thread.join()
     
     # Đợi cho queue được xử lý hết
     raw_data_queue.join()
     if decoded_data_queue:
         decoded_data_queue.join()
+    if mqtt_queue:
+        mqtt_queue.join()
     logger.info("Hàng đợi đã được xử lý xong.")
 
     # 9. Dọn dẹp

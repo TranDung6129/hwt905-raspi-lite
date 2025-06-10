@@ -250,6 +250,22 @@ timestamp,acc_x,acc_y,acc_z,acc_x_filtered,acc_y_filtered,acc_z_filtered,vel_x,v
 }
 ```
 
+## Changelog
+
+### v2.0.0 (Current) - MQTT & Pipeline Refactoring
+- **MQTT Module Refactor**: Re-architected the MQTT client into a modular, strategy-based publisher (`BasePublisher`, `RealtimePublisher`, `BatchPublisher`, `PublisherFactory`).
+- **Asynchronous Pipeline**: Enhanced the data pipeline to four independent threads (`Reader` -> `Decoder` -> `Processor` -> `MqttPublisher`) using Queues for non-blocking, high-throughput operation.
+- **Configurable Payloads & Compression**:
+  - Implemented logic to send lean/customized MQTT payloads (e.g., only displacement and FFT results).
+  - Integrated `zlib` and `msgpack` for efficient, configurable data compression.
+- **Bug Fixes**: Resolved serialization (`KeyError`, `numpy.ndarray`) and import (`NameError`) errors for both `batch` and `realtime` MQTT strategies.
+
+### v1.0.0 - Initial Release
+- Initial implementation of the data processing system.
+- Supports reading from HWT905 sensor.
+- Includes RLS and FFT algorithms.
+- Basic local CSV storage.
+
 ## Troubleshooting
 
 ### Common Issues
@@ -471,17 +487,3 @@ For technical support or questions:
 - Create an issue in the project repository
 - Review the troubleshooting section above
 - Check the logs for detailed error information
-
-## Changelog
-
-### v2.0.0 (Current)
-- **Major Refactor**: Consolidated data processors into single unified system
-- **Enhanced Storage**: Robust local storage with batch transmission capabilities
-- **Improved Reliability**: Better error handling and automatic recovery
-- **Production Ready**: Systemd integration and performance optimizations
-- **Comprehensive Documentation**: Complete setup and deployment guide
-
-### v1.0.0
-- Initial release with basic sensor data processing
-- Real-time MQTT transmission
-- Basic storage capabilities
