@@ -30,7 +30,8 @@ class SensorDataProcessor:
         
         Args:
             dt_sensor (float): Khoảng thời gian lấy mẫu của cảm biến (giây).
-            gravity_g (float): Giá trị gia tốc trọng trường (m/s^2) để chuyển đổi từ g.
+            gravity_g (float): Giá trị gia tốc trọng trường (m/s^2) để chuyển đổi từ g sang m/s².
+                              Nên sử dụng 9.80665 cho độ chính xác cao, hoặc 1.0 nếu muốn giữ nguyên đơn vị g.
             acc_filter_type (str): Loại bộ lọc gia tốc ban đầu ('moving_average', 'low_pass', None).
             acc_filter_param (Any): Tham số cho bộ lọc gia tốc (window_size cho MA, alpha cho LP).
             rls_sample_frame_size (int): Số mẫu cho mỗi frame xử lý của RLS.
@@ -129,9 +130,11 @@ class SensorDataProcessor:
             None nếu chỉ lưu trữ mà không truyền ngay hoặc chưa đủ dữ liệu để xử lý.
         """
         # 1. Tiền xử lý dữ liệu gia tốc thô và áp dụng bộ lọc ban đầu
+        # Dữ liệu từ cảm biến đã được decode về đơn vị g, cần chuyển sang m/s²
         acc_x_ms2_raw = acc_x_g * self.gravity_g
         acc_y_ms2_raw = acc_y_g * self.gravity_g
         # Hiệu chỉnh offset Z cơ bản (trừ đi 1g trọng lực khi cảm biến đứng yên)
+        # Lưu ý: Chỉ trừ 1g chứ không phải 1*gravity_g vì đã tính trong phép nhân phía trên
         acc_z_ms2_raw = (acc_z_g - 1.0) * self.gravity_g 
 
         # Áp dụng bộ lọc sơ bộ nếu có

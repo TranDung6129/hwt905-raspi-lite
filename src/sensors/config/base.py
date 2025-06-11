@@ -40,48 +40,6 @@ class HWT905ConfigBase:
             if logger.level > logging.INFO:
                 logger.setLevel(logging.INFO)
     
-    def connect(self) -> bool:
-        """
-        Thiết lập kết nối serial đến cảm biến.
-        Returns:
-            True nếu kết nối thành công, False nếu thất bại.
-        """
-        if self.ser and self.ser.is_open:
-            logger.info(f"Kết nối serial trên {self.port} đã được thiết lập.")
-            if self.ser.baudrate != self.baudrate:
-                logger.warning(f"Baudrate của kết nối hiện tại ({self.ser.baudrate}) không khớp với baudrate yêu cầu ({self.baudrate}). Đang cố gắng đóng và mở lại.")
-                self.ser.close()
-                self.ser = None
-
-        if self.ser is None or not self.ser.is_open:
-            try:
-                self.ser = serial.Serial(
-                    port=self.port,
-                    baudrate=self.baudrate,
-                    bytesize=serial.EIGHTBITS,
-                    parity=serial.PARITY_NONE,
-                    stopbits=serial.STOPBITS_ONE,
-                    timeout=self.timeout
-                )
-                logger.info(f"Đã kết nối tới HWT905 trên {self.port} với baudrate {self.baudrate}")
-                return True
-            except serial.SerialException as e:
-                logger.error(f"Không thể kết nối tới {self.port} @ {self.baudrate}bps: {str(e)}")
-                self.ser = None
-                return False
-            except Exception as e:
-                logger.error(f"Lỗi không xác định khi kết nối tới {self.port}: {str(e)}")
-                self.ser = None
-                return False
-        return False
-
-    def close(self) -> None:
-        """Đóng kết nối serial."""
-        if self.ser and self.ser.is_open:
-            self.ser.close()
-            logger.info(f"Đã đóng kết nối serial trên {self.port}.")
-        self.ser = None
-
     def _send_write_command(self, register_address: int, data_low: int, data_high: int, retries: int = 3) -> bool:
         """
         Gửi một lệnh GHI (Write) đến cảm biến theo định dạng FF AA ADDR DATAL DATAH.

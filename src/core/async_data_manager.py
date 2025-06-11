@@ -51,6 +51,11 @@ class SerialReaderThread(threading.Thread):
                     self.raw_data_queue.put(raw_packet)
                     self.raw_packet_count += 1
                 else:
+                    # Kiểm tra xem có phải do mất kết nối không
+                    if self.data_decoder.ser is None or not self.data_decoder.ser.is_open:
+                        logger.warning("[Reader] Phát hiện mất kết nối serial, dừng luồng đọc.")
+                        self.running_flag.clear()
+                        break
                     # Ngủ một chút nếu không có dữ liệu để tránh chiếm dụng CPU
                     time.sleep(0.0001)
                 
@@ -64,6 +69,7 @@ class SerialReaderThread(threading.Thread):
             except Exception as e:
                 logger.error(f"[Reader] Lỗi trong luồng đọc Serial: {e}", exc_info=True)
                 self.running_flag.clear()
+                break
         logger.info("Luồng đọc Serial đã dừng.")
 
 

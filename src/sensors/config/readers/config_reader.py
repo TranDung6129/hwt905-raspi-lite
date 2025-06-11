@@ -52,8 +52,7 @@ class ConfigReader(HWT905ConfigBase):
             time.sleep(0.1)  # Chờ một chút để cảm biến xử lý và gửi phản hồi
 
             # Truyền self.ser hiện có cho DataDecoder để tránh mở lại cổng
-            decoder = HWT905DataDecoder(self.port, self.baudrate, timeout=self.timeout, 
-                                        debug=(logger.level <= logging.DEBUG), ser_instance=self.ser)
+            decoder = HWT905DataDecoder(debug=(logger.level <= logging.DEBUG), ser_instance=self.ser)
             
             start_time = time.time()
             found_response = False

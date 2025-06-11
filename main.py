@@ -2,12 +2,16 @@ import logging
 import time
 import json
 import threading
+import signal
+import sys
 from queue import Queue
+import serial
+from typing import Optional
 
 # Import các module và lớp cần thiết
 from src.utils.common import load_config
 from src.utils.logger_setup import setup_logging
-from src.sensors.hwt905_config_manager import HWT905ConfigManager
+from src.core.connection_manager import SensorConnectionManager
 from src.sensors.hwt905_data_decoder import HWT905DataDecoder
 from src.processing.data_processor import SensorDataProcessor
 from src.storage.storage_manager import StorageManager
@@ -18,10 +22,17 @@ from src.sensors.hwt905_constants import (
     RSW_TIME_BIT, RSW_PRESSURE_HEIGHT_BIT, RSW_GPS_LON_LAT_BIT,
     RSW_GPS_SPEED_BIT, RSW_QUATERNION_BIT, RSW_GPS_ACCURACY_BIT, RSW_PORT_STATUS_BIT
 )
-from typing import Optional
+
 
 # Cờ để điều khiển vòng lặp chính
 _running_flag = threading.Event()
+
+def signal_handler(signum, frame):
+    """Xử lý tín hiệu dừng một cách graceful"""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Nhận tín hiệu {signum}. Đang dừng ứng dụng...")
+    _running_flag.clear()
+    sys.exit(0)
 
 
 def main():
@@ -45,81 +56,61 @@ def main():
     logger.info("Ứng dụng Backend IMU đã khởi động.")
     logger.debug(f"Đã tải cấu hình: {app_config}")
 
+    # Thiết lập signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     _running_flag.set()
 
     # 3. Đọc cấu hình điều khiển quy trình
     process_control_config = app_config.get("process_control", {})
     decoding_enabled = process_control_config.get("decoding", True)
-    # Các cờ khác hiện không dùng trong pipeline bất đồng bộ mới, nhưng giữ lại để tương thích
     processing_enabled = process_control_config.get("processing", True)
     mqtt_sending_enabled = process_control_config.get("mqtt_sending", True)
     
     logger.info(f"Cấu hình quy trình: Decoding={decoding_enabled}, Processing={processing_enabled}, MQTT Sending={mqtt_sending_enabled}")
 
-    # 4. Khởi tạo và thiết lập cảm biến
-    config_manager: Optional[HWT905ConfigManager] = None
-    data_decoder: Optional[HWT905DataDecoder] = None
-
+    # 4. Quản lý kết nối và cấu hình cảm biến
     sensor_config = app_config["sensor"]
-    sensor_port = sensor_config["uart_port"]
-    sensor_baudrate = sensor_config["baud_rate"]
+    connection_manager = SensorConnectionManager(
+        sensor_config=sensor_config,
+        debug=(logger.level <= logging.DEBUG)
+    )
+    
+    ser_instance: Optional[serial.Serial] = None
+    
+    # Vòng lặp để đảm bảo kết nối đúng
+    while _running_flag.is_set():
+        if ser_instance is None or not ser_instance.is_open:
+            ser_instance = connection_manager.establish_connection()
+            if not ser_instance:
+                # establish_connection đã là vòng lặp vô hạn, nên trường hợp này chỉ xảy ra nếu app dừng
+                logger.info("Quá trình kết nối bị dừng do cờ _running_flag được xóa.")
+                break 
+
+        if not connection_manager.ensure_correct_config():
+            # Baudrate đã được thay đổi, cần kết nối lại
+            logger.info("Baudrate của cảm biến đã được thay đổi. Đang kết nối lại...")
+            ser_instance = None # Đặt lại để vòng lặp thực hiện kết nối lại
+            continue
+
+        # Kết nối đã ổn và baudrate đã đúng. Sẵn sàng để chạy pipeline
+        # LƯUÝ: Không cần cấu hình lại cảm biến vì:
+        # 1. HWT905 lưu cấu hình vĩnh viễn (persist qua power cycle)
+        # 2. Connection manager đã verify baudrate và connection thành công
+        # 3. Cấu hình lại mỗi lần khởi động gây chậm startup và có thể confict
+        # 4. Nếu cần thay đổi config, sử dụng tool riêng biệt
+        logger.info("Cảm biến đã được kết nối thành công và sẵn sàng đọc dữ liệu.")
+        break # Thoát khỏi vòng lặp setup
+            
+    if not _running_flag.is_set():
+        logger.warning("Dừng ứng dụng trong quá trình khởi tạo cảm biến.")
+        return
+
+    # Khởi tạo DataDecoder với instance serial đã kết nối
+    data_decoder = HWT905DataDecoder(debug=(logger.level <= logging.DEBUG), ser_instance=ser_instance)
+    
     target_output_rate = sensor_config["default_output_rate_hz"]
-    target_output_content_config = sensor_config["default_output_content"]
-    
-    rsw_value = 0
-    rsw_bit_map = {
-        "time": RSW_TIME_BIT, "acceleration": RSW_ACC_BIT, "angular_velocity": RSW_GYRO_BIT,
-        "angle": RSW_ANGLE_BIT, "magnetic_field": RSW_MAG_BIT, "port_status": RSW_PORT_STATUS_BIT,
-        "atmospheric_pressure_height": RSW_PRESSURE_HEIGHT_BIT, "gnss_data": RSW_GPS_LON_LAT_BIT,
-        "gnss_speed": RSW_GPS_SPEED_BIT, "quaternion": RSW_QUATERNION_BIT, "gnss_accuracy": RSW_GPS_ACCURACY_BIT
-    }
-    for key, bit_const in rsw_bit_map.items():
-        if target_output_content_config.get(key, False):
-            rsw_value |= bit_const
-
-    logger.info("Ứng dụng đang chạy với CẢM BIẾN THẬT.")
-    config_manager = HWT905ConfigManager(port=sensor_port, baudrate=sensor_baudrate, debug=(logger.level <= logging.DEBUG))
-    data_decoder = HWT905DataDecoder(port=sensor_port, baudrate=sensor_baudrate, debug=(logger.level <= logging.DEBUG))
-
-    if not config_manager.connect():
-        logger.critical("Không thể kết nối với cảm biến. Thoát ứng dụng.")
-        return
-    data_decoder.ser = config_manager.ser
-
-    try:
-        if not config_manager.verify_baudrate():
-            logger.warning(f"Baudrate hiện tại ({sensor_baudrate}) không khớp hoặc không đọc được. Đang thử factory reset và đặt lại baudrate mặc định.")
-            if config_manager.factory_reset():
-                logger.info("Factory Reset thành công. Đang kết nối lại với baudrate mặc định (9600).")
-                config_manager.close()
-                config_manager.baudrate = BAUD_RATE_9600
-                data_decoder.baudrate = BAUD_RATE_9600
-                if not config_manager.connect():
-                     logger.critical("Không thể kết nối lại sau Factory Reset. Thoát ứng dụng.")
-                     return
-                data_decoder.ser = config_manager.ser
-                if not config_manager.verify_factory_reset_state():
-                    logger.error("Cảm biến không ở trạng thái mặc định sau Factory Reset. Vẫn tiếp tục nhưng có thể có vấn đề.")
-            else:
-                logger.critical("Factory Reset thất bại. Không thể cấu hình cảm biến. Thoát ứng dụng.")
-            return
-        else:
-            logger.info(f"Baudrate hiện tại của cảm biến khớp với cài đặt ({sensor_baudrate} bps).")
-    except ValueError as e:
-        logger.critical(f"Lỗi nghiêm trọng khi kiểm tra baudrate: {e}. Thoát ứng dụng.")
-        config_manager.close()
-        return
-
-    logger.info(f"Đang đặt tốc độ output của cảm biến thành {target_output_rate} Hz và nội dung {hex(rsw_value)}...")
-    if config_manager.unlock_sensor_for_config():
-        rate_map = {10: RATE_OUTPUT_10HZ, 50: RATE_OUTPUT_50HZ, 100: RATE_OUTPUT_100HZ, 200: RATE_OUTPUT_200HZ}
-        rate_const = rate_map.get(target_output_rate, RATE_OUTPUT_100HZ)
-        if not config_manager.set_update_rate(rate_const): logger.error("Không thể đặt tốc độ output.")
-        if not config_manager.set_output_content(rsw_value): logger.error("Không thể đặt nội dung output.")
-        if not config_manager.save_configuration(): logger.error("Không thể lưu cấu hình cảm biến.")
-    else:
-        logger.error("Không thể mở khóa cảm biến để cấu hình.")
-    
     app_config["processing"]["dt_sensor_actual"] = 1.0 / target_output_rate
 
     # 5. Khởi tạo các thành phần dựa trên cấu hình
@@ -215,10 +206,28 @@ def main():
     try:
         # Vòng lặp chính của chương trình chỉ cần giữ cho nó sống và chờ tín hiệu dừng
         while _running_flag.is_set():
+            # Kiểm tra xem kết nối serial có còn sống không
+            if data_decoder.ser is None or not data_decoder.ser.is_open:
+                logger.error("Mất kết nối với cảm biến! Đang cố gắng kết nối lại...")
+                # Dừng các luồng hiện tại
+                _running_flag.clear()
+                reader_thread.join()
+                decoder_thread.join()
+                if processor_thread:
+                    processor_thread.join()
+                if mqtt_publisher_thread:
+                    mqtt_publisher_thread.join()
+                
+                # Bắt đầu lại từ đầu
+                main()
+                return # Thoát khỏi lần chạy hiện tại của main()
             time.sleep(1) 
     except KeyboardInterrupt:
-        logger.info("Nhận tín hiệu dừng (Ctrl+C). Đang dừng ứng dụng.")
+        logger.info("Nhận tín hiệu dừng (Ctrl+C). Đang dừng ứng dụng...")
+    except Exception as e:
+        logger.error(f"Lỗi không mong muốn trong vòng lặp chính: {e}")
     finally:
+        # Đảm bảo _running_flag được clear trong mọi trường hợp
         _running_flag.clear()
 
     # 8. Đợi các luồng kết thúc
@@ -240,8 +249,8 @@ def main():
 
     # 9. Dọn dẹp
     logger.info("Đang dọn dẹp tài nguyên...")
-    if config_manager:
-        config_manager.close() # Thao tác này cũng sẽ đóng cổng serial trong data_decoder
+    if connection_manager:
+        connection_manager.close_connection()
     if decoded_storage_manager:
         decoded_storage_manager.close()
     if processed_storage_manager:

@@ -23,28 +23,17 @@ logger = logging.getLogger(__name__)
 class HWT905DataDecoder:
     """
     Lớp để đọc và giải mã các gói dữ liệu từ cảm biến Witmotion HWT905.
-    Sử dụng PacketDecoderFactory để decode các packet types khác nhau.
+    Lớp này không quản lý kết nối serial, nó chỉ sử dụng một instance đã có.
     """
 
-    def __init__(self, port: str, baudrate: int = DEFAULT_BAUDRATE,
-                 timeout: float = DEFAULT_SERIAL_TIMEOUT, debug: bool = False,
-                 ser_instance: Optional[serial.Serial] = None):
+    def __init__(self, debug: bool = False, ser_instance: Optional[serial.Serial] = None):
         """
         Khởi tạo bộ giải mã dữ liệu HWT905.
         Args:
-            port: Cổng serial để kết nối.
-            baudrate: Tốc độ baud cho giao tiếp serial.
-            timeout: Thời gian chờ đọc serial (giây).
             debug: Kích hoạt logging ở mức DEBUG nếu True.
-            ser_instance: Một instance serial.Serial đã được khởi tạo. Nếu cung cấp,
-                          lớp sẽ sử dụng instance này thay vì tự mở/đóng cổng.
+            ser_instance: Một instance serial.Serial đã được khởi tạo và kết nối.
         """
-        self.port = port
-        self.baudrate = baudrate
-        self.timeout = timeout
-        self.ser = ser_instance # Sử dụng instance serial được cung cấp nếu có
-        
-        # Khởi tạo decoder factory
+        self.ser = ser_instance
         self.decoder_factory = PacketDecoderFactory()
 
         if debug:
@@ -53,87 +42,69 @@ class HWT905DataDecoder:
             if logger.level > logging.INFO:
                  logger.setLevel(logging.INFO)
 
-        self._packet_buffer = b'' # Buffer để lưu trữ các byte nhận được
+        self._packet_buffer = b''
+        self._last_serial_error_time = 0
+        self._serial_error_log_delay = 5  # Chỉ log lỗi serial mỗi 5 giây
 
-    def connect(self) -> bool:
+    def set_ser_instance(self, ser_instance: Optional[serial.Serial]):
         """
-        Thiết lập kết nối serial đến cảm biến nếu chưa có ser_instance.
-        Returns:
-            True nếu kết nối thành công, False nếu thất bại.
+        Thiết lập hoặc cập nhật instance serial được sử dụng bởi decoder.
+        Args:
+            ser_instance: Instance serial mới, hoặc None để ngắt kết nối.
         """
-        if self.ser and self.ser.is_open:
-            logger.info(f"Kết nối serial trên {self.port} đã được thiết lập.")
-            if self.ser.baudrate != self.baudrate:
-                logger.warning(f"Baudrate của kết nối hiện tại ({self.ser.baudrate}) không khớp với baudrate yêu cầu ({self.baudrate}). Đang cố gắng đóng và mở lại.")
-                self.ser.close()
-                self.ser = None
-
-        if self.ser is None or not self.ser.is_open:
-            try:
-                self.ser = serial.Serial(
-                    port=self.port,
-                    baudrate=self.baudrate,
-                    bytesize=serial.EIGHTBITS,
-                    parity=serial.PARITY_NONE,
-                    stopbits=serial.STOPBITS_ONE,
-                    timeout=self.timeout
-                )
-                logger.info(f"Đã kết nối tới HWT905 trên {self.port} với baudrate {self.baudrate}")
-                return True
-            except serial.SerialException as e:
-                logger.error(f"Không thể kết nối tới {self.port} @ {self.baudrate}bps: {str(e)}")
-                self.ser = None
-                return False
-            except Exception as e:
-                logger.error(f"Lỗi không xác định khi kết nối tới {self.port}: {str(e)}")
-                self.ser = None
-                return False
-        return True # Return True if connection was already open or just established successfully
-
-
-    def close(self) -> None:
-        """Đóng kết nối serial nếu nó được mở bởi instance này."""
-        if self.ser and self.ser.is_open:
-            # Chỉ đóng cổng nếu instance này tự mở nó (không phải là ser_instance được truyền vào)
-            # Hoặc nếu không có cách nào để biết, hãy cảnh báo và đóng.
-            logger.info(f"Đang đóng kết nối serial trên {self.port}.")
-            self.ser.close()
-        self.ser = None
-
-    def read_one_packet(self) -> Optional[Dict[str, Any]]:
-        """
-        Đọc một gói dữ liệu thô từ cổng serial, giải mã và trả về.
-        Đây là một hàm tiện ích kết hợp read_raw_packet và decode_raw_packet.
-        Returns:
-            Dict[str, Any] chứa dữ liệu đã giải mã hoặc thông tin lỗi, hoặc None nếu không có gói hợp lệ.
-        """
-        raw_packet = self.read_raw_packet()
-        if raw_packet:
-            return self.decode_raw_packet(raw_packet)
-        return None
+        self.ser = ser_instance
+        self._packet_buffer = b'' # Xóa buffer khi có kết nối mới
+        logger.info(f"Data Decoder đã được cập nhật với instance serial mới: {'kết nối' if ser_instance else 'ngắt kết nối'}")
 
     def read_raw_packet(self) -> Optional[bytes]:
         """
         Đọc cho đến khi tìm thấy một gói dữ liệu 11-byte hoàn chỉnh từ cổng serial.
         Sử dụng buffer để xử lý các byte nhận được không theo gói hoàn chỉnh.
         Returns:
-            Một gói dữ liệu 11-byte thô, hoặc None nếu không có dữ liệu mới.
+            Một gói dữ liệu 11-byte thô, hoặc None nếu không có dữ liệu mới hoặc có lỗi.
         """
         if not self.ser or not self.ser.is_open:
-            logger.error("Lỗi đọc gói tin: Kết nối serial chưa được thiết lập hoặc đã đóng.")
+            # Không log lỗi ở đây để tránh spam, ConnectionManager sẽ xử lý
             return None
 
         try:
-            # Đọc tất cả các byte đang chờ trong buffer của cổng serial
             if self.ser.in_waiting > 0:
                 new_bytes = self.ser.read(self.ser.in_waiting)
                 self._packet_buffer += new_bytes
         except serial.SerialException as e:
-            logger.error(f"Lỗi serial khi đọc dữ liệu: {e}")
+            # Chỉ log lỗi định kỳ để tránh spam
+            current_time = time.time()
+            if current_time - self._last_serial_error_time > self._serial_error_log_delay:
+                logger.error(f"Lỗi serial khi đọc dữ liệu: {e}. Kết nối có thể đã mất.")
+                self._last_serial_error_time = current_time
+            # Đóng cổng và xóa instance để báo hiệu cho lớp quản lý biết cần kết nối lại
+            try:
+                self.ser.close()
+            except Exception:
+                pass # Bỏ qua lỗi khi đóng cổng đã lỗi
+            self.ser = None 
+            self._packet_buffer = b''
+            return None
+        except OSError as e:
+            # Xử lý lỗi I/O (bao gồm Errno 5) với throttling tương tự như SerialException
+            current_time = time.time()
+            if current_time - self._last_serial_error_time > self._serial_error_log_delay:
+                logger.error(f"Lỗi I/O khi đọc dữ liệu: {e}. Kết nối có thể đã mất.")
+                self._last_serial_error_time = current_time
+            # Đóng cổng và xóa instance để báo hiệu cho lớp quản lý biết cần kết nối lại
+            try:
+                self.ser.close()
+            except Exception:
+                pass # Bỏ qua lỗi khi đóng cổng đã lỗi
+            self.ser = None 
             self._packet_buffer = b''
             return None
         except Exception as e:
-            logger.error(f"Lỗi không xác định khi đọc dữ liệu: {e}")
+            # Chỉ log lỗi không xác định với throttling
+            current_time = time.time()
+            if current_time - self._last_serial_error_time > self._serial_error_log_delay:
+                logger.error(f"Lỗi không xác định khi đọc dữ liệu: {e}")
+                self._last_serial_error_time = current_time
             return None
         
         # Xử lý buffer để tìm một gói tin hoàn chỉnh
@@ -145,6 +116,7 @@ class HWT905DataDecoder:
             header_index = self._packet_buffer.find(bytes([DATA_HEADER_BYTE]))
             if header_index == -1:
                 # Không tìm thấy header, buffer này là vô giá trị
+                logger.debug(f"Không tìm thấy header trong buffer. Đã xóa {len(self._packet_buffer)} bytes.")
                 self._packet_buffer = b''
                 return None
             
@@ -226,3 +198,15 @@ class HWT905DataDecoder:
             Dict mapping packet_type -> packet_name
         """
         return self.decoder_factory.list_supported_types()
+
+    def read_one_packet(self) -> Optional[Dict[str, Any]]:
+        """
+        Đọc và giải mã một gói dữ liệu từ cổng serial.
+        
+        Returns:
+            Dict chứa thông tin packet đã được decode, hoặc None nếu không có packet nào.
+        """
+        raw_packet = self.read_raw_packet()
+        if raw_packet:
+            return self.decode_raw_packet(raw_packet)
+        return None

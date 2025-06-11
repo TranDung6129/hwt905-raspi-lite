@@ -46,17 +46,6 @@ class HWT905UnifiedConfigManager(HWT905ConfigBase):
         self.config_reader = ConfigReader(port, baudrate, timeout, debug)
         self.config_verifier = ConfigVerifier(port, baudrate, timeout, debug)
     
-    def connect(self) -> bool:
-        """
-        Thiết lập kết nối serial và đồng bộ cho tất cả components.
-        Returns:
-            True nếu kết nối thành công, False nếu thất bại.
-        """
-        if super().connect():
-            self._sync_serial_instance()
-            return True
-        return False
-    
     def _sync_serial_instance(self):
         """Đồng bộ serial instance cho tất cả components."""
         components = [
@@ -127,4 +116,13 @@ class HWT905UnifiedConfigManager(HWT905ConfigBase):
         Thiết lập instance serial từ bên ngoài và đồng bộ cho tất cả components.
         """
         super().set_ser_instance(ser_instance)
+        self._sync_serial_instance()
+
+    def close(self):
+        """Đóng kết nối serial được quản lý bởi base class."""
+        if self.ser and self.ser.is_open:
+            logger.info(f"Yêu cầu đóng cổng serial {self.port} từ UnifiedConfigManager.")
+            self.ser.close()
+        self.ser = None
+        # Đảm bảo các component con cũng được cập nhật
         self._sync_serial_instance()

@@ -154,12 +154,126 @@ nano config/mqtt_message_config.json
 # Activate virtual environment
 source venv/bin/activate
 
-# Run the main application
+# Run the main application using startup script
+scripts/run_app.sh
+
+# Or run directly
 python main.py
 
 # Run with debug logging
 python main.py --log-level DEBUG
 ```
+
+### Sensor Configuration
+
+Use the dedicated configuration tool for sensor setup:
+
+```bash
+# Read current sensor configuration
+python3 scripts/config_tool.py --info
+
+# Set output rate to 200 Hz
+python3 scripts/config_tool.py --rate 200
+
+# Set output content (acceleration and time data)
+python3 scripts/config_tool.py --output acc,time
+
+# Change baudrate to 115200
+python3 scripts/config_tool.py --baudrate 115200
+
+# Perform factory reset
+python3 scripts/config_tool.py --factory-reset
+```
+
+### Remote Configuration via MQTT
+
+The system includes a **standalone MQTT Configuration Service** that runs independently from the main application, allowing remote sensor configuration while the system operates in the field.
+
+#### Starting the Services
+
+```bash
+# 1. Start main data logging application
+./scripts/run_app.sh
+
+# 2. Start MQTT config service (in separate terminal)
+./scripts/start_mqtt_config.sh
+
+# Or run directly with options
+python3 scripts/mqtt_config_service.py --log-level INFO
+```
+
+#### Service Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐
+│  Main App       │    │ MQTT Config     │
+│ (Data Logging)  │    │ Service         │
+│                 │    │ (Remote Config) │
+└─────────┬───────┘    └─────────┬───────┘
+          │                      │
+          └──────┬──────┬────────┘
+                 │      │
+         ┌───────▼──────▼───────┐
+         │    HWT905 Sensor     │
+         └──────────────────────┘
+```
+
+#### MQTT Configuration Commands
+
+```bash
+# Test MQTT configuration interactively
+python3 scripts/mqtt_config_tester.py --broker localhost --interactive
+
+# Send specific commands via MQTT
+mosquitto_pub -h localhost -t "hwt905/commands" -m '{"command":"read_config"}'
+```
+
+#### Supported Commands
+
+```json
+// Set output rate to 200 Hz
+{
+  "command": "set_rate",
+  "value": 200
+}
+
+// Configure output data types
+{
+  "command": "set_output",
+  "acceleration": true,
+  "gyroscope": true,
+  "angle": true,
+  "magnetic": false
+}
+
+// Change sensor baudrate
+{
+  "command": "set_baudrate", 
+  "value": 115200
+}
+
+// Factory reset sensor
+{
+  "command": "factory_reset"
+}
+
+// Read current configuration
+{
+  "command": "read_config"
+}
+
+// Send raw hex commands
+{
+  "command": "raw_hex",
+  "data": "FF AA 27 19 00"
+}
+```
+
+#### Web Interface
+
+Open `templates/mqtt_config.html` in a web browser for a graphical interface to control the sensor remotely.
+
+**📋 See [MQTT_CONFIG_SERVICE.md](MQTT_CONFIG_SERVICE.md) for detailed documentation.**
 
 ### Mock Data Testing
 
@@ -252,7 +366,19 @@ timestamp,acc_x,acc_y,acc_z,acc_x_filtered,acc_y_filtered,acc_z_filtered,vel_x,v
 
 ## Changelog
 
-### v2.0.0 (Current) - MQTT & Pipeline Refactoring
+### v2.2.0 (Latest) - Startup Optimization & Config Management
+- **Startup Performance**: Removed unnecessary sensor reconfiguration on every startup for faster boot times
+- **Configuration Tool**: Added dedicated `sensor_config_tool.py` for standalone sensor configuration
+- **Better Separation**: Clean separation between operational runtime and configuration management
+- **Reduced Log Noise**: Eliminated configuration steps from normal operation logs
+
+### v2.1.0 - Error Handling & Stability Fixes
+- **Fixed Errno 5 Spam**: Added proper throttling for OSError (including Input/Output errors) to prevent log spam when sensor is disconnected
+- **Improved Ctrl+C Handling**: Enhanced signal handling to ensure application stops with single Ctrl+C press
+- **Better Connection Loss Detection**: SerialReaderThread now properly detects and handles connection loss
+- **Virtual Environment Support**: Added setup scripts for better dependency management
+
+### v2.0.0 - MQTT & Pipeline Refactoring
 - **MQTT Module Refactor**: Re-architected the MQTT client into a modular, strategy-based publisher (`BasePublisher`, `RealtimePublisher`, `BatchPublisher`, `PublisherFactory`).
 - **Asynchronous Pipeline**: Enhanced the data pipeline to four independent threads (`Reader` -> `Decoder` -> `Processor` -> `MqttPublisher`) using Queues for non-blocking, high-throughput operation.
 - **Configurable Payloads & Compression**:

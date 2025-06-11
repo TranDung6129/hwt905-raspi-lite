@@ -48,3 +48,38 @@ def setup_logging(log_file_path: str, log_level: str, max_bytes: int = 10485760,
     logger.addHandler(file_handler)
 
     logger.info(f"Logging đã được thiết lập thành công. Cấp độ: {log_level.upper()}, File: {log_file_path}")
+
+def setup_logger(log_level: int = logging.INFO, name: str = None):
+    """
+    Thiết lập logger đơn giản cho service.
+    
+    Args:
+        log_level: Cấp độ log (logging.INFO, logging.DEBUG, etc.)
+        name: Tên logger (None để sử dụng root logger)
+    """
+    # Tạo hoặc lấy logger
+    logger = logging.getLogger(name)
+    
+    # Xóa handlers cũ nếu có
+    if logger.handlers:
+        for handler in logger.handlers[:]:
+            logger.removeHandler(handler)
+    
+    # Thiết lập level
+    logger.setLevel(log_level)
+    
+    # Tạo formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Tạo console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(formatter)
+    
+    # Thêm handler
+    logger.addHandler(console_handler)
+    
+    return logger

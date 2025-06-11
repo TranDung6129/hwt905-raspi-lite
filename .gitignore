@@ -16,6 +16,7 @@ logs/
 
 # Data
 data/
+backup/
 
 # IDE
 .idea/
@@ -23,3 +24,7 @@ data/
 
 # Misc
 *.DS_Store
+
+# Test files
+test_*.py
+*_test.py

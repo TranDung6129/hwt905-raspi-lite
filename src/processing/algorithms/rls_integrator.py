@@ -169,16 +169,28 @@ class RLSIntegrator:
         vel_raw_buffer = np.zeros_like(self.acc_buffer)
         vel_raw_buffer[1:] = np.cumsum(integral_kernel_acc)
         
-        # Loại bỏ xu hướng tuyến tính khỏi vận tốc bằng RLS
-        vel_detrended_buffer = self._remove_linear_trend_rls(vel_raw_buffer, t_buffer)
+        # Tích phân gia tốc thô từ buffer thành vận tốc bằng NumPy (nhanh hơn vòng lặp Python)
+        integral_kernel_acc = (self.acc_buffer[:-1] + self.acc_buffer[1:]) * self.dt / 2
+        vel_raw_buffer = np.zeros_like(self.acc_buffer)
+        vel_raw_buffer[1:] = np.cumsum(integral_kernel_acc)
         
-        # Tích phân vận tốc đã khử xu hướng thành vị trí bằng NumPy
+        # Tích phân gia tốc thô từ buffer thành vận tốc bằng NumPy (nhanh hơn vòng lặp Python)
+        integral_kernel_acc = (self.acc_buffer[:-1] + self.acc_buffer[1:]) * self.dt / 2
+        vel_raw_buffer = np.zeros_like(self.acc_buffer)
+        vel_raw_buffer[1:] = np.cumsum(integral_kernel_acc)
+        
+        # Loại bỏ DC component từ velocity để tránh drift tích lũy
+        vel_mean = np.mean(vel_raw_buffer)
+        vel_detrended_buffer = vel_raw_buffer - vel_mean
+        
+        # Tích phân vận tốc đã khử DC thành vị trí bằng NumPy
         integral_kernel_vel = (vel_detrended_buffer[:-1] + vel_detrended_buffer[1:]) * self.dt / 2
         disp_raw_buffer = np.zeros_like(vel_detrended_buffer)
         disp_raw_buffer[1:] = np.cumsum(integral_kernel_vel)
 
-        # Loại bỏ xu hướng tuyến tính khỏi vị trí bằng RLS
-        disp_detrended_buffer = self._remove_linear_trend_rls(disp_raw_buffer, t_buffer)
+        # Không loại bỏ DC từ displacement để giữ lại tín hiệu thực
+        # Chỉ zero-center để tránh offset lớn
+        disp_detrended_buffer = disp_raw_buffer - disp_raw_buffer[0]
         
         # Gia tốc đã lọc (nếu có cần) có thể là gia tốc đã khử DC/drift ban đầu
         # Trong RLS, gia tốc thường không được lọc trực tiếp mà thông qua việc khử xu hướng trên vel/disp
