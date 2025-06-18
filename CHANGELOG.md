@@ -5,6 +5,56 @@ All notable changes to the HWT905 RaspberryPi Sensor Data Processing System will
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2025-06-18
+
+### Added
+- **Auto-Reconnection System**: Intelligent automatic sensor connection recovery
+  - Real-time detection of USB/serial device disconnections
+  - Automatic thread management and restart capabilities
+  - Queue cleanup to prevent stale data processing
+  - Configurable retry limits and delays
+  - Zero manual intervention required for common hardware issues
+- **Enhanced Connection Monitoring**: Continuous connection health checking
+- **Thread-Safe Recovery**: Safe shutdown and restart of all processing threads
+- **Production Reliability Features**: 
+  - Handles cable disconnections automatically
+  - Recovers from USB port resets
+  - Manages power fluctuation scenarios
+  - Maintains continuous data logging with minimal loss
+
+### Enhanced
+- **SerialReaderThread**: Added connection loss detection with event signaling
+- **Main Application Loop**: Implemented reconnection workflow with timeout handling
+- **Connection Manager**: Enhanced with retry logic and connection validation
+- **Error Handling**: Improved I/O error detection and recovery procedures
+- **Logging**: Added detailed reconnection event logging for monitoring
+
+### Fixed
+- **Connection Loss Handling**: System no longer terminates on sensor disconnection
+- **Thread Management**: Proper cleanup and restart of all processing threads
+- **Queue Management**: Prevents data corruption during reconnection events
+- **MQTT Reconnection**: Ensures MQTT connections are re-established after sensor recovery
+- **MQTT Warning Log Spam**: Eliminated repetitive WARNING messages for unpublished MQTT messages
+  - Single throttled warning line shows recent Mid values instead of spamming logs
+  - Implemented 5-second throttling with Mid aggregation for better monitoring
+
+### Technical Improvements
+- Added `connection_lost` event flag in SerialReaderThread
+- Implemented maximum retry attempt limits (configurable)
+- Enhanced main loop with nested connection monitoring
+- Improved error throttling to prevent log spam
+- Added graceful thread termination with timeouts
+- **MQTT Publisher Throttling**: Added intelligent warning aggregation for unpublished messages
+  - Collects multiple Mid values and displays them in consolidated warnings
+  - Prevents memory leaks by maintaining only recent 50 Mid values
+  - Shows up to 10 recent Mids with total count for better debugging
+
+### Production Benefits
+- **Industrial Reliability**: System handles common field deployment issues automatically
+- **Reduced Maintenance**: Eliminates need for manual restarts due to connection issues
+- **Continuous Operation**: Maintains data collection during temporary disconnections
+- **Remote Monitoring**: Connection events are logged and can be monitored remotely
+
 ## [2.3.0] - 2025-06-11
 
 ### Added

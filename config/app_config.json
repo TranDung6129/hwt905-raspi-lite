@@ -57,7 +57,7 @@
   "process_control": {
     "decoding": true,
     "processing": true,
-    "mqtt_sending": false
+    "mqtt_sending": true
   },
   "data_compression": {
     "format": "json",            

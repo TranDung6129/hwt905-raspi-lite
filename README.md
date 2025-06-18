@@ -10,7 +10,9 @@ This is a comprehensive embedded sensor data processing system designed specific
 - **Advanced Signal Processing**: RLS (Recursive Least Squares) integration and FFT analysis
 - **Robust Storage System**: Local data storage with configurable formats (CSV/JSON) for offline operation
 - **MQTT Connectivity**: Real-time data transmission with automatic reconnection
+- **Auto-Reconnection**: Intelligent sensor connection recovery with automatic thread management
 - **Intermittent Connectivity Support**: Batch transmission capabilities for unstable network environments
+- **Remote Configuration**: Standalone MQTT service for field-configurable sensor parameters
 - **Embedded-Optimized**: Designed for resource-constrained environments like Raspberry Pi
 
 ## System Architecture
@@ -613,3 +615,61 @@ For technical support or questions:
 - Create an issue in the project repository
 - Review the troubleshooting section above
 - Check the logs for detailed error information
+
+### System Health Check
+
+Before deployment, run the system health check to ensure everything is properly configured:
+
+```bash
+# Run comprehensive system check
+./scripts/system_check.sh
+
+# This will verify:
+# ✅ File permissions and directory structure
+# ✅ Python dependencies and imports  
+# ✅ Configuration file validity
+# ✅ System resources and USB devices
+# ✅ Basic functionality tests
+```
+
+**Output Example:**
+```
+✅ System health check completed
+🚀 System ready for operation
+📋 Quick Start Commands:
+   Start main app:          ./scripts/run_app.sh
+   Test auto-reconnection:  ./scripts/test_auto_reconnection.sh
+```
+
+#### Testing Auto-Reconnection
+
+Use the provided test script to verify auto-reconnection functionality:
+
+```bash
+# Interactive test mode (recommended)
+./scripts/test_auto_reconnection.sh
+
+# Monitor logs only
+./scripts/test_auto_reconnection.sh monitor
+
+# Automated test (60-second monitoring window)
+./scripts/test_auto_reconnection.sh auto
+
+# Check current USB devices
+./scripts/test_auto_reconnection.sh devices
+```
+
+**Test Procedure:**
+1. Start the main application
+2. Wait for successful sensor connection
+3. Physically disconnect the USB sensor cable
+4. Observe automatic detection of connection loss
+5. Reconnect the USB cable
+6. Verify automatic reconnection and system recovery
+
+**Expected Log Output:**
+```
+🔄 Bắt đầu quá trình kết nối lại...
+✅ Cảm biến đã được kết nối lại thành công!
+✅ Đã kết nối lại thành công và khởi động lại hệ thống!
+```

@@ -41,6 +41,7 @@ class SerialReaderThread(threading.Thread):
         self.running_flag = running_flag
         self.raw_packet_count = 0
         self.last_log_time = time.time()
+        self.connection_lost = threading.Event()  # Flag to signal connection loss
 
     def run(self):
         logger.info("Luồng đọc Serial đã bắt đầu.")
@@ -53,9 +54,11 @@ class SerialReaderThread(threading.Thread):
                 else:
                     # Kiểm tra xem có phải do mất kết nối không
                     if self.data_decoder.ser is None or not self.data_decoder.ser.is_open:
-                        logger.warning("[Reader] Phát hiện mất kết nối serial, dừng luồng đọc.")
-                        self.running_flag.clear()
-                        break
+                        logger.warning("[Reader] Phát hiện mất kết nối serial. Báo hiệu cho main thread và tiếp tục chờ.")
+                        self.connection_lost.set()  # Signal connection loss
+                        # Chờ một chút trước khi check lại
+                        time.sleep(1)
+                        continue
                     # Ngủ một chút nếu không có dữ liệu để tránh chiếm dụng CPU
                     time.sleep(0.0001)
                 
@@ -68,9 +71,17 @@ class SerialReaderThread(threading.Thread):
 
             except Exception as e:
                 logger.error(f"[Reader] Lỗi trong luồng đọc Serial: {e}", exc_info=True)
-                self.running_flag.clear()
+                # Không clear running_flag để main thread có thể xử lý reconnection
                 break
         logger.info("Luồng đọc Serial đã dừng.")
+
+    def is_connection_lost(self) -> bool:
+        """Check if connection has been lost"""
+        return self.connection_lost.is_set()
+    
+    def reset_connection_lost(self):
+        """Reset the connection lost flag"""
+        self.connection_lost.clear()
 
 
 class DecoderThread(threading.Thread):
@@ -153,7 +164,8 @@ class DecoderThread(threading.Thread):
                 continue
             except Exception as e:
                 logger.error(f"[Decoder] Lỗi trong luồng Decoder: {e}", exc_info=True)
-                self.running_flag.clear()
+                # Không clear running_flag để main thread có thể xử lý reconnection
+                break
                 
         logger.info("Luồng Giải mã (DecoderThread) đã dừng.")
         # Báo hiệu cho luồng Processor rằng không còn dữ liệu mới
@@ -249,7 +261,8 @@ class ProcessorThread(threading.Thread):
                 continue
             except Exception as e:
                 logger.error(f"[Processor] Lỗi trong luồng Processor: {e}", exc_info=True)
-                self.running_flag.clear()
+                # Không clear running_flag để main thread có thể xử lý reconnection
+                break
         
         # Báo hiệu cho luồng MQTT rằng không còn dữ liệu mới
         if self.mqtt_queue:
@@ -311,4 +324,4 @@ class MqttPublisherThread(threading.Thread):
             self.publisher.flush()
             
         self.publisher.disconnect()
-        logger.info("Luồng MQTT Publisher đã dừng.") 
+        logger.info("Luồng MQTT Publisher đã dừng.")

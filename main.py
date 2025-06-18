@@ -204,24 +204,144 @@ def main():
         mqtt_publisher_thread.start()
 
     try:
-        # Vòng lặp chính của chương trình chỉ cần giữ cho nó sống và chờ tín hiệu dừng
-        while _running_flag.is_set():
-            # Kiểm tra xem kết nối serial có còn sống không
-            if data_decoder.ser is None or not data_decoder.ser.is_open:
-                logger.error("Mất kết nối với cảm biến! Đang cố gắng kết nối lại...")
-                # Dừng các luồng hiện tại
-                _running_flag.clear()
-                reader_thread.join()
-                decoder_thread.join()
-                if processor_thread:
-                    processor_thread.join()
-                if mqtt_publisher_thread:
-                    mqtt_publisher_thread.join()
+        # Vòng lặp chính với auto-reconnection
+        while True:
+            # Vòng lặp giám sát kết nối
+            connection_lost = False
+            while _running_flag.is_set():
+                # Kiểm tra xem có mất kết nối không
+                if reader_thread.is_connection_lost() or data_decoder.ser is None or not data_decoder.ser.is_open:
+                    logger.warning("Phát hiện mất kết nối với cảm biến!")
+                    connection_lost = True
+                    break
+                time.sleep(1)
+            
+            # Nếu mất kết nối, thực hiện reconnection
+            if connection_lost:
+                logger.info("🔄 Bắt đầu quá trình kết nối lại...")
                 
-                # Bắt đầu lại từ đầu
-                main()
-                return # Thoát khỏi lần chạy hiện tại của main()
-            time.sleep(1) 
+                # Reset connection lost flag
+                reader_thread.reset_connection_lost()
+                
+                # Dừng các luồng hiện tại
+                logger.info("Đang dừng các luồng để chuẩn bị kết nối lại...")
+                _running_flag.clear()
+                
+                # Đợi các luồng kết thúc với timeout
+                reader_thread.join(timeout=5)
+                decoder_thread.join(timeout=5)
+                if processor_thread and processor_thread.is_alive():
+                    processor_thread.join(timeout=5)
+                if mqtt_publisher_thread and mqtt_publisher_thread.is_alive():
+                    mqtt_publisher_thread.join(timeout=5)
+                
+                # Reset các queue
+                logger.info("Đang làm trống hàng đợi...")
+                while not raw_data_queue.empty():
+                    try:
+                        raw_data_queue.get_nowait()
+                    except:
+                        break
+                
+                if decoded_data_queue:
+                    while not decoded_data_queue.empty():
+                        try:
+                            decoded_data_queue.get_nowait()
+                        except:
+                            break
+                
+                if mqtt_queue:
+                    while not mqtt_queue.empty():
+                        try:
+                            mqtt_queue.get_nowait()
+                        except:
+                            break
+                
+                # Đóng kết nối cũ
+                connection_manager.close_connection()
+                
+                # Reset running flag và thử kết nối lại
+                _running_flag.set()
+                logger.info("Đang thử kết nối lại với cảm biến...")
+                
+                # Thiết lập lại kết nối
+                ser_instance = None
+                reconnect_attempts = 0
+                max_attempts = 10  # Giới hạn số lần thử để tránh vòng lặp vô hạn
+                
+                while _running_flag.is_set() and reconnect_attempts < max_attempts:
+                    reconnect_attempts += 1
+                    logger.info(f"Lần thử kết nối lại: {reconnect_attempts}/{max_attempts}")
+                    
+                    if ser_instance is None or not ser_instance.is_open:
+                        ser_instance = connection_manager.establish_connection()
+                        if not ser_instance:
+                            logger.warning("Kết nối thất bại, thử lại sau 5 giây...")
+                            time.sleep(5)
+                            continue
+
+                    if not connection_manager.ensure_correct_config():
+                        logger.info("Baudrate của cảm biến đã được thay đổi. Đang kết nối lại...")
+                        ser_instance = None
+                        continue
+                    
+                    logger.info("✅ Cảm biến đã được kết nối lại thành công!")
+                    break
+                
+                if not _running_flag.is_set():
+                    logger.info("Quá trình reconnection bị dừng do _running_flag được clear.")
+                    break
+                    
+                if reconnect_attempts >= max_attempts:
+                    logger.error(f"❌ Không thể kết nối lại sau {max_attempts} lần thử. Dừng ứng dụng.")
+                    break
+                    
+                # Cập nhật data_decoder với kết nối mới
+                data_decoder.set_ser_instance(ser_instance)
+                
+                # Tạo lại các luồng
+                logger.info("Đang tạo lại các luồng...")
+                reader_thread = SerialReaderThread(data_decoder, raw_data_queue, _running_flag)
+                
+                decoder_thread = DecoderThread(
+                    data_decoder=data_decoder,
+                    raw_data_queue=raw_data_queue,
+                    decoded_data_queue=decoded_data_queue,
+                    running_flag=_running_flag,
+                    decoded_storage_manager=decoded_storage_manager
+                )
+                
+                processor_thread = None
+                if processing_enabled and sensor_data_processor:
+                    processor_thread = ProcessorThread(
+                        decoded_data_queue=decoded_data_queue,
+                        running_flag=_running_flag,
+                        sensor_data_processor=sensor_data_processor,
+                        processed_storage_manager=processed_storage_manager,
+                        mqtt_queue=mqtt_queue
+                    )
+                
+                mqtt_publisher_thread = None
+                if mqtt_sending_enabled and mqtt_queue:
+                    mqtt_publisher_thread = MqttPublisherThread(
+                        mqtt_queue=mqtt_queue,
+                        running_flag=_running_flag
+                    )
+                
+                # Khởi động lại các luồng
+                logger.info("Đang khởi động lại các luồng...")
+                reader_thread.start()
+                decoder_thread.start()
+                if processor_thread:
+                    processor_thread.start()
+                if mqtt_publisher_thread:
+                    mqtt_publisher_thread.start()
+                
+                logger.info("✅ Đã kết nối lại thành công và khởi động lại hệ thống!")
+                continue
+            else:
+                # Thoát bình thường (không phải do mất kết nối)
+                break 
     except KeyboardInterrupt:
         logger.info("Nhận tín hiệu dừng (Ctrl+C). Đang dừng ứng dụng...")
     except Exception as e:
