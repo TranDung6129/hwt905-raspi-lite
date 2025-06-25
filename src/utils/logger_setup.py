@@ -6,26 +6,34 @@ class ColoredFormatter(logging.Formatter):
     
     # Mã màu ANSI
     COLORS = {
-        'DEBUG': '\033[36m',     # Cyan
-        'INFO': '\033[37m',      # White  
-        'WARNING': '\033[33m',   # Yellow
-        'ERROR': '\033[31m',     # Red
-        'CRITICAL': '\033[35m'   # Magenta
+        'DEBUG': '\033[36m',     # Cyan - toàn bộ dòng
+        'INFO': '\033[32m',      # Green - chỉ level name
+        'WARNING': '\033[33m',   # Yellow - toàn bộ dòng
+        'ERROR': '\033[31m',     # Red - toàn bộ dòng
+        'CRITICAL': '\033[35m'   # Magenta - toàn bộ dòng
     }
     RESET = '\033[0m'  # Reset màu
 
     def format(self, record):
-        # Lấy màu cho level hiện tại
-        color = self.COLORS.get(record.levelname, self.RESET)
-        
-        # Format message
+        # Format message cơ bản
         log_message = super().format(record)
         
-        # Thêm màu vào level name
-        colored_message = log_message.replace(
-            record.levelname, 
-            f"{color}{record.levelname}{self.RESET}"
-        )
+        # Thay đổi levelname thành format [LEVEL]
+        bracketed_level = f"[{record.levelname}]"
+        log_message = log_message.replace(record.levelname, bracketed_level)
+        
+        # Áp dụng màu sắc theo quy tắc
+        color = self.COLORS.get(record.levelname, self.RESET)
+        
+        if record.levelname == 'INFO':
+            # INFO: chỉ tô màu xanh lá cho [INFO]
+            colored_message = log_message.replace(
+                bracketed_level, 
+                f"{color}{bracketed_level}{self.RESET}"
+            )
+        else:
+            # Các level khác: tô màu toàn bộ dòng
+            colored_message = f"{color}{log_message}{self.RESET}"
         
         return colored_message
 

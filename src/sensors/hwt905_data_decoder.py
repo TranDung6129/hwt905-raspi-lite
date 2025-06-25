@@ -34,6 +34,7 @@ class HWT905DataDecoder:
             ser_instance: Một instance serial.Serial đã được khởi tạo và kết nối.
         """
         self.ser = ser_instance
+        self.debug = debug  # Lưu debug flag
         self.decoder_factory = PacketDecoderFactory()
 
         if debug:
@@ -58,89 +59,56 @@ class HWT905DataDecoder:
 
     def read_raw_packet(self) -> Optional[bytes]:
         """
-        Đọc cho đến khi tìm thấy một gói dữ liệu 11-byte hoàn chỉnh từ cổng serial.
-        Sử dụng buffer để xử lý các byte nhận được không theo gói hoàn chỉnh.
-        Returns:
-            Một gói dữ liệu 11-byte thô, hoặc None nếu không có dữ liệu mới hoặc có lỗi.
+        Đọc một gói dữ liệu thô từ cổng serial.
+        Trả về None nếu không có dữ liệu hoặc gặp lỗi.
+        Raise SerialException nếu mất kết nối.
         """
-        if not self.ser or not self.ser.is_open:
-            # Không log lỗi ở đây để tránh spam, ConnectionManager sẽ xử lý
-            return None
-
         try:
-            if self.ser.in_waiting > 0:
-                new_bytes = self.ser.read(self.ser.in_waiting)
-                self._packet_buffer += new_bytes
+            if not self.ser or not self.ser.is_open:
+                logger.error("Cổng serial không mở hoặc đã bị đóng")
+                raise serial.SerialException("Cổng serial không khả dụng")
+                
+            # Tìm header 0x55
+            header_byte = self.ser.read(1)
+            if not header_byte:
+                return None
+                
+            if header_byte[0] != 0x55:
+                if self.debug:
+                    logger.debug(f"Byte không phải header: 0x{header_byte[0]:02X}")
+                return None
+            
+            # Đọc 10 byte còn lại (tổng cộng 11 byte)
+            remaining_data = self.ser.read(10)
+            if len(remaining_data) != 10:
+                logger.warning(f"Chỉ đọc được {len(remaining_data)}/10 byte sau header")
+                return None
+            
+            full_packet = header_byte + remaining_data
+            
+            if self.debug:
+                packet_hex = ' '.join(f'{b:02X}' for b in full_packet)
+                logger.debug(f"Gói tin thô: {packet_hex}")
+            
+            return full_packet
+            
+        except serial.SerialTimeoutException:
+            # Timeout bình thường, không phải lỗi
+            return None
+            
         except serial.SerialException as e:
-            # Chỉ log lỗi định kỳ để tránh spam
-            current_time = time.time()
-            if current_time - self._last_serial_error_time > self._serial_error_log_delay:
-                logger.error(f"Lỗi serial khi đọc dữ liệu: {e}. Kết nối có thể đã mất.")
-                self._last_serial_error_time = current_time
-            # Đóng cổng và xóa instance để báo hiệu cho lớp quản lý biết cần kết nối lại
-            try:
-                self.ser.close()
-            except Exception:
-                pass # Bỏ qua lỗi khi đóng cổng đã lỗi
-            self.ser = None 
-            self._packet_buffer = b''
-            return None
+            # Lỗi serial nghiêm trọng - mất kết nối
+            # Không log ở đây nữa, để connection_manager xử lý
+            raise e
+                
         except OSError as e:
-            # Xử lý lỗi I/O (bao gồm Errno 5) với throttling tương tự như SerialException
-            current_time = time.time()
-            if current_time - self._last_serial_error_time > self._serial_error_log_delay:
-                logger.error(f"Lỗi I/O khi đọc dữ liệu: {e}. Kết nối có thể đã mất.")
-                self._last_serial_error_time = current_time
-            # Đóng cổng và xóa instance để báo hiệu cho lớp quản lý biết cần kết nối lại
-            try:
-                self.ser.close()
-            except Exception:
-                pass # Bỏ qua lỗi khi đóng cổng đã lỗi
-            self.ser = None 
-            self._packet_buffer = b''
-            return None
+            # Lỗi hệ điều hành - thường là mất kết nối
+            # Không log ở đây nữa, để connection_manager xử lý
+            raise serial.SerialException(f"Mất kết nối: {e}")
+            
         except Exception as e:
-            # Chỉ log lỗi không xác định với throttling
-            current_time = time.time()
-            if current_time - self._last_serial_error_time > self._serial_error_log_delay:
-                logger.error(f"Lỗi không xác định khi đọc dữ liệu: {e}")
-                self._last_serial_error_time = current_time
-            return None
-        
-        # Xử lý buffer để tìm một gói tin hoàn chỉnh
-        while True:
-            if len(self._packet_buffer) < DATA_PACKET_LENGTH:
-                # Không đủ dữ liệu trong buffer để tạo thành một gói tin, thoát ra và chờ thêm
-                return None
-
-            header_index = self._packet_buffer.find(bytes([DATA_HEADER_BYTE]))
-            if header_index == -1:
-                # Không tìm thấy header, buffer này là vô giá trị
-                logger.debug(f"Không tìm thấy header trong buffer. Đã xóa {len(self._packet_buffer)} bytes.")
-                self._packet_buffer = b''
-                return None
-            
-            if header_index > 0:
-                # Dọn dẹp các byte rác trước header
-                garbage_bytes = self._packet_buffer[:header_index]
-                self._packet_buffer = self._packet_buffer[header_index:]
-                logger.warning(f"Tìm thấy {len(garbage_bytes)} byte rác trước header: {garbage_bytes.hex().upper()}. Đã xóa.")
-                continue # Bắt đầu lại vòng lặp với buffer đã được dọn dẹp
-
-            # Tại đây, buffer bắt đầu bằng một header và đủ dài
-            potential_packet = self._packet_buffer[:DATA_PACKET_LENGTH]
-            
-            # Kiểm tra checksum ngay tại đây để loại bỏ gói tin không hợp lệ sớm
-            if is_valid_data_packet(potential_packet):
-                self._packet_buffer = self._packet_buffer[DATA_PACKET_LENGTH:] # Xóa gói tin đã xử lý
-                return potential_packet # Trả về gói tin hợp lệ
-            else:
-                # Gói tin không hợp lệ, xóa header bị lỗi và thử lại
-                logger.debug(f"Gói tin không hợp lệ (checksum sai): {potential_packet.hex().upper()}. Bỏ qua.")
-                self._packet_buffer = self._packet_buffer[1:]
-                continue
-        
-        return None
+            logger.error(f"Lỗi không mong muốn khi đọc: {e}", exc_info=True)
+            raise serial.SerialException(f"Lỗi đọc dữ liệu: {e}")
 
     def decode_raw_packet(self, raw_packet: bytes) -> Dict[str, Any]:
         """

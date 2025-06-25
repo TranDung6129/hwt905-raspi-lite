@@ -15,6 +15,7 @@ MQTT_DATA_TOPIC = os.getenv("MQTT_DATA_TOPIC", "sensor/hwt905/angle_data")
 # Sensor Configuration
 SENSOR_UART_PORT = os.getenv("SENSOR_UART_PORT", "/dev/ttyUSB0")
 SENSOR_BAUD_RATE = int(os.getenv("SENSOR_BAUD_RATE", 115200))
+SENSOR_AUTO_DISCOVER = os.getenv("SENSOR_AUTO_DISCOVER", "true").lower() == "true"
 
 # Storage Configuration
 STORAGE_BASE_DIR = os.getenv("STORAGE_BASE_DIR", "data")
