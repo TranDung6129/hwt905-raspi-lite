@@ -1,101 +1,97 @@
 # src/storage/storage_manager.py
 
 import logging
+import csv
+import os
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
-
-from .data_storage import DataStorage
 
 logger = logging.getLogger(__name__)
 
 class StorageManager:
     """
-    Lớp quản lý tổng thể việc lưu trữ và truyền dữ liệu.
-    Tích hợp với luồng xử lý hiện tại để hỗ trợ lưu trữ trong môi trường kết nối gián đoạn.
+    Quản lý việc lưu trữ dữ liệu cảm biến vào file CSV.
+    Tự động xoay vòng file lưu trữ dựa trên thời gian (ví dụ: mỗi giờ một file mới).
     """
-    
-    def __init__(self, storage_config: Dict[str, Any], 
-                 data_type: str = "processed",
-                 fields_to_write: Optional[List[str]] = None):
+
+    def __init__(self,
+                 base_dir: str,
+                 file_rotation_hours: int,
+                 fields_to_write: List[str]):
         """
         Khởi tạo StorageManager.
-        
+
         Args:
-            storage_config: Cấu hình cho storage system
-            data_type: Loại dữ liệu ('processed' hoặc 'decoded') để xác định thư mục con.
-            fields_to_write: Danh sách các cột cụ thể để ghi (cho CSV).
+            base_dir (str): Thư mục gốc để lưu các file dữ liệu.
+            file_rotation_hours (int): Số giờ trước khi tạo một file mới.
+            fields_to_write (List[str]): Danh sách các tên cột cho file CSV.
         """
-        self.storage_enabled = storage_config.get("enabled", True)
-        self.immediate_transmission = storage_config.get("immediate_transmission", True)
-        self.batch_transmission_size = storage_config.get("batch_transmission_size", 50)
-        self.data_type = data_type
-        
-        if self.storage_enabled:
-            # Tạo thư mục con dựa trên data_type
-            sub_dir = f"{self.data_type}_data"
-            
-            self.data_storage = DataStorage(
-                base_data_dir=storage_config.get("base_dir", "data"),
-                sub_dir=sub_dir,
-                storage_format=storage_config.get("format", "csv"),
-                max_file_size_mb=storage_config.get("max_file_size_mb", 10.0),
-                session_prefix=storage_config.get("session_prefix", "session"),
-                fields_to_write=fields_to_write
-            )
-        else:
-            self.data_storage = None
-        
-        logger.info(f"StorageManager initialized for '{self.data_type}' - Enabled: {self.storage_enabled}, Immediate transmission: {self.immediate_transmission}")
-    
-    def store_and_prepare_for_transmission(self, data: Dict[str, Any], timestamp: float = None) -> Optional[Dict[str, Any]]:
+        self.base_dir = base_dir
+        self.file_rotation_delta = timedelta(hours=file_rotation_hours)
+        self.fields_to_write = fields_to_write
+
+        self.current_file_path: Optional[str] = None
+        self.current_file_writer: Optional[csv.DictWriter] = None
+        self.current_file_handle: Optional[Any] = None
+        self.current_file_start_time: Optional[datetime] = None
+
+        os.makedirs(self.base_dir, exist_ok=True)
+        logger.info(f"StorageManager khởi tạo. Lưu dữ liệu trong '{self.base_dir}', xoay file mỗi {file_rotation_hours} giờ.")
+
+    def _get_new_filepath(self) -> str:
+        """Tạo đường dẫn file mới dựa trên thời gian hiện tại."""
+        now = datetime.now()
+        filename = f"data_{now.strftime('%Y%m%d-%H%M%S')}.csv"
+        return os.path.join(self.base_dir, filename)
+
+    def _open_new_file(self):
+        """Mở một file CSV mới để ghi và ghi header."""
+        self.close_current_file()  # Đảm bảo file cũ đã được đóng
+
+        self.current_file_path = self._get_new_filepath()
+        self.current_file_start_time = datetime.now()
+        try:
+            self.current_file_handle = open(self.current_file_path, 'w', newline='', encoding='utf-8')
+            self.current_file_writer = csv.DictWriter(self.current_file_handle, fieldnames=self.fields_to_write)
+            self.current_file_writer.writeheader()
+            logger.info(f"Mở file lưu trữ mới: {self.current_file_path}")
+        except IOError as e:
+            logger.error(f"Không thể mở file mới '{self.current_file_path}': {e}")
+            self.current_file_path = None
+            self.current_file_writer = None
+            self.current_file_handle = None
+            self.current_file_start_time = None
+
+
+    def write_data(self, data: Dict[str, Any]):
         """
-        Lưu trữ dữ liệu và chuẩn bị cho việc truyền.
-        
-        Args:
-            data: Dữ liệu (đã xử lý hoặc đã giải mã)
-            timestamp: Timestamp (sử dụng thời gian hiện tại nếu None)
-            
-        Returns:
-            Dữ liệu để truyền ngay (nếu immediate_transmission=True), None nếu chỉ lưu trữ
+        Ghi một dòng dữ liệu vào file CSV hiện tại.
+        Kiểm tra và xoay vòng file nếu cần thiết.
         """
-        # Luôn lưu trữ nếu storage được bật
-        if self.storage_enabled and self.data_storage:
-            self.data_storage.store_data(data, timestamp)
+        # Kiểm tra xem có cần xoay vòng file không
+        if (self.current_file_writer is None or
+            (self.current_file_start_time and datetime.now() >= self.current_file_start_time + self.file_rotation_delta)):
+            self._open_new_file()
+
+        # Ghi dữ liệu nếu file đã mở thành công
+        if self.current_file_writer and self.current_file_handle:
+            try:
+                self.current_file_writer.writerow(data)
+            except IOError as e:
+                logger.error(f"Lỗi khi ghi vào file '{self.current_file_path}': {e}")
+                # Cố gắng mở lại file ở lần ghi tiếp theo
+                self.close_current_file()
+
+    def close_current_file(self):
+        """Đóng file đang mở hiện tại."""
+        if self.current_file_handle:
+            try:
+                self.current_file_handle.close()
+                logger.info(f"Đóng file: {self.current_file_path}")
+            except IOError as e:
+                logger.error(f"Lỗi khi đóng file '{self.current_file_path}': {e}")
         
-        # Trả về dữ liệu để truyền ngay nếu được cấu hình
-        if self.immediate_transmission:
-            return data
-        
-        return None
-    
-    def get_batch_for_transmission(self) -> List[Dict[str, Any]]:
-        """
-        Lấy một batch dữ liệu từ storage để truyền đi.
-        
-        Returns:
-            Danh sách dữ liệu cần truyền
-        """
-        if not self.storage_enabled or not self.data_storage:
-            return []
-        
-        return self.data_storage.get_pending_data_for_transmission(self.batch_transmission_size)
-    
-    def get_current_session(self) -> Optional[str]:
-        """Lấy session hiện tại."""
-        if self.data_storage:
-            return self.data_storage.get_current_session()
-        return None
-    
-    def create_new_session(self) -> Optional[str]:
-        """Tạo session mới."""
-        if self.data_storage:
-            return self.data_storage.create_new_session()
-        return None
-    
-    def is_enabled(self) -> bool:
-        """Kiểm tra xem storage có được bật không."""
-        return self.storage_enabled
-    
-    def close(self):
-        """Đóng storage manager."""
-        if self.data_storage:
-            self.data_storage.close()
+        self.current_file_path = None
+        self.current_file_writer = None
+        self.current_file_handle = None
+        self.current_file_start_time = None

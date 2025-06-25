@@ -1,0 +1,36 @@
+[Unit]
+Description=HWT905 Sensor Main Application
+Documentation=https://github.com/your-repo/hwt905-raspi-lite
+After=network.target
+
+[Service]
+# Service type 'notify' cho phép service gửi tín hiệu tới systemd (ví dụ: READY=1, WATCHDOG=1)
+Type=notify
+
+# Đường dẫn tới file môi trường
+EnvironmentFile=/home/pi/hwt905-raspi-lite/.env
+
+# Người dùng để chạy service (sẽ được thay thế bởi install.sh)
+User=pi
+Group=pi
+
+# Thư mục làm việc của ứng dụng
+WorkingDirectory=/home/pi/hwt905-raspi-lite
+
+# Lệnh để khởi chạy ứng dụng python trong virtual environment
+ExecStart=/home/pi/hwt905-raspi-lite/venv/bin/python3 main.py
+
+# Luôn luôn khởi động lại service nếu nó dừng (do lỗi hoặc watchdog)
+Restart=always
+RestartSec=10
+
+# Cấu hình watchdog. Ứng dụng phải gửi tín hiệu mỗi <20s.
+WatchdogSec=20s
+
+# Ghi log chuẩn vào systemd-journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hwt-app
+
+[Install]
+WantedBy=multi-user.target 

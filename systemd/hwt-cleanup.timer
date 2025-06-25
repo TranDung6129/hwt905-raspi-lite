@@ -1,0 +1,19 @@
+[Unit]
+Description=Timer to periodically run HWT905 Data Cleanup
+Documentation=https://github.com/your-repo/hwt905-raspi-lite
+
+[Timer]
+# Chạy lần đầu 15 phút sau khi boot
+OnBootSec=15min
+
+# Chạy hàng ngày vào lúc 03:30 sáng
+OnCalendar=daily
+
+# Phân tán thời gian khởi động để tránh tất cả các timer chạy cùng lúc
+RandomizedDelaySec=300
+
+# Đảm bảo timer được lưu giữa các lần reboot
+Persistent=true
+
+[Install]
+WantedBy=timers.target 

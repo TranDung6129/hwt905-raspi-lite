@@ -1,0 +1,27 @@
+[Unit]
+Description=HWT905 Data Sender Service
+Documentation=https://github.com/your-repo/hwt905-raspi-lite
+# Dịch vụ này chỉ nên chạy sau khi mạng đã sẵn sàng
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# Đường dẫn tới file môi trường
+EnvironmentFile=/home/pi/hwt905-raspi-lite/.env
+
+# Người dùng để chạy service
+User=pi
+Group=pi
+
+# Thư mục làm việc
+WorkingDirectory=/home/pi/hwt905-raspi-lite
+
+# Lệnh để chạy kịch bản sender
+ExecStart=/home/pi/hwt905-raspi-lite/venv/bin/python3 scripts/sender.py
+
+# Ghi log vào journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hwt-sender 

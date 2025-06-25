@@ -1,0 +1,20 @@
+[Unit]
+Description=Timer to periodically run HWT905 Data Sender
+Documentation=https://github.com/your-repo/hwt905-raspi-lite
+
+[Timer]
+# Chạy lần đầu 5 phút sau khi boot
+OnBootSec=5min
+
+# Chạy định kỳ sau đó. Ví dụ: '*-*-* *:0/30:00' nghĩa là chạy mỗi 30 phút.
+# Chúng ta sẽ thay thế giá trị này trong kịch bản cài đặt.
+OnCalendar=*:0/30
+
+# Phân tán thời gian khởi động để tránh tất cả các timer chạy cùng lúc
+RandomizedDelaySec=60
+
+# Đảm bảo timer được lưu giữa các lần reboot
+Persistent=true
+
+[Install]
+WantedBy=timers.target 
