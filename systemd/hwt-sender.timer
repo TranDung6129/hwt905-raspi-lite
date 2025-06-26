@@ -1,6 +1,6 @@
 [Unit]
 Description=Timer to periodically run HWT905 Data Sender
-Documentation=https://github.com/your-repo/hwt905-raspi-lite
+Documentation=https://github.com/aitogy/hwt905-raspi-lite
 
 [Timer]
 # Chạy lần đầu 5 phút sau khi boot

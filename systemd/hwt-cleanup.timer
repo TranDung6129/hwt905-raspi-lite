@@ -1,6 +1,6 @@
 [Unit]
 Description=Timer to periodically run HWT905 Data Cleanup
-Documentation=https://github.com/your-repo/hwt905-raspi-lite
+Documentation=https://github.com/aitogy/hwt905-raspi-lite
 
 [Timer]
 # Chạy lần đầu 15 phút sau khi boot

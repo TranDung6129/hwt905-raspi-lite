@@ -21,6 +21,8 @@ SENSOR_AUTO_DISCOVER = os.getenv("SENSOR_AUTO_DISCOVER", "true").lower() == "tru
 STORAGE_BASE_DIR = os.getenv("STORAGE_BASE_DIR", "data")
 STORAGE_FILE_ROTATION_HOURS = int(os.getenv("STORAGE_FILE_ROTATION_HOURS", 1))
 STORAGE_CLEANUP_DAYS = int(os.getenv("STORAGE_CLEANUP_DAYS", 7))
+# Reconnection file strategy: "new_file" (tạo file mới) or "continue_file" (tiếp tục file cũ)
+STORAGE_RECONNECTION_STRATEGY = os.getenv("STORAGE_RECONNECTION_STRATEGY", "new_file")
 
 # Data Collection Configuration
 # Rate limiting for data storage (Hz). Set to 0 to disable rate limiting
@@ -28,4 +30,4 @@ DATA_COLLECTION_RATE_HZ = int(os.getenv("DATA_COLLECTION_RATE_HZ", 200))
 
 # Service Configuration
 SENDER_PERIOD_MINUTES = int(os.getenv("SENDER_PERIOD_MINUTES", 30))
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper() 
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()

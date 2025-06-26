@@ -1,6 +1,6 @@
 [Unit]
 Description=HWT905 Sensor Main Application
-Documentation=https://github.com/your-repo/hwt905-raspi-lite
+Documentation=https://github.com/aitogy/hwt905-raspi-lite
 After=network.target
 
 [Service]
@@ -8,17 +8,17 @@ After=network.target
 Type=notify
 
 # Đường dẫn tới file môi trường
-EnvironmentFile=/home/pi/hwt905-raspi-lite/.env
+EnvironmentFile=/home/aitogy/hwt905-raspi-lite/.env
 
-# Người dùng để chạy service (sẽ được thay thế bởi install.sh)
-User=pi
-Group=pi
+# Người dùng để chạy service
+User=aitogy
+Group=aitogy
 
 # Thư mục làm việc của ứng dụng
-WorkingDirectory=/home/pi/hwt905-raspi-lite
+WorkingDirectory=/home/aitogy/hwt905-raspi-lite
 
-# Lệnh để khởi chạy ứng dụng python trong virtual environment
-ExecStart=/home/pi/hwt905-raspi-lite/venv/bin/python3 main.py
+# Lệnh để khởi chạy ứng dụng python3.11 trong virtual environment
+ExecStart=/home/aitogy/hwt905-raspi-lite/venv/bin/python3.11 main.py
 
 # Luôn luôn khởi động lại service nếu nó dừng (do lỗi hoặc watchdog)
 Restart=always

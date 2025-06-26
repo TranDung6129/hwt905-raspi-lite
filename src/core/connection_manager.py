@@ -1,7 +1,6 @@
 import logging
 import time
 import serial
-import subprocess
 import glob
 import os
 from typing import Optional, List
@@ -10,26 +9,21 @@ logger = logging.getLogger(__name__)
 
 class SensorConnectionManager:
     """
-    Quản lý kết nối với cảm biến HWT905 sử dụng logic cổng động.
+    Quản lý kết nối với cảm biến HWT905 đơn giản.
     """
 
-    def __init__(self, port: str, baudrate: int, reconnect_delay_s: int = 5, debug: bool = False):
+    def __init__(self, port: str, baudrate: int):
         """
         Khởi tạo ConnectionManager.
 
         Args:
             port (str): Cổng UART ưu tiên, ví dụ: "/dev/ttyUSB0".
             baudrate (int): Baudrate để kết nối.
-            reconnect_delay_s (int): Thời gian chờ giữa các lần thử kết nối lại.
-            debug (bool): Bật chế độ debug.
         """
         self.preferred_port = port
         self.baudrate = baudrate
-        self.reconnect_delay_s = reconnect_delay_s
-        self.debug = debug
         self.ser: Optional[serial.Serial] = None
         self.current_port: Optional[str] = None
-        self.reconnection_attempts = 0
 
     def find_available_ports(self) -> List[str]:
         """
@@ -53,94 +47,9 @@ class SensorConnectionManager:
         
         return ports
 
-    def test_port_with_data(self, port: str, timeout: float = 2.0) -> bool:
-        """
-        Test cổng bằng cách kiểm tra có dữ liệu từ cảm biến không.
-        
-        Args:
-            port: Cổng serial để test
-            timeout: Thời gian chờ tối đa
-            
-        Returns:
-            True nếu cổng có dữ liệu từ cảm biến
-        """
-        try:
-            test_ser = serial.Serial(
-                port=port,
-                baudrate=self.baudrate,
-                timeout=0.1,
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE
-            )
-            
-            if test_ser.is_open:
-                # Clear buffers
-                test_ser.reset_input_buffer()
-                test_ser.reset_output_buffer()
-                
-                # Chờ dữ liệu
-                start_time = time.time()
-                data_count = 0
-                
-                while time.time() - start_time < timeout:
-                    if test_ser.in_waiting > 0:
-                        data = test_ser.read(test_ser.in_waiting)
-                        data_count += len(data)
-                        if data_count > 100:  # Đủ dữ liệu để confirm
-                            test_ser.close()
-                            logger.info(f"Cổng {port} có {data_count} bytes dữ liệu - Active!")
-                            return True
-                    time.sleep(0.1)
-                
-                test_ser.close()
-                
-                if data_count > 0:
-                    logger.info(f"Cổng {port} có {data_count} bytes dữ liệu nhưng ít")
-                    return True
-                else:
-                    logger.debug(f"Cổng {port} không có dữ liệu")
-                    return False
-            
-        except Exception as e:
-            logger.debug(f"Không thể test cổng {port}: {e}")
-            return False
-        
-        return False
-
-    def find_active_port(self) -> Optional[str]:
-        """
-        Tìm cổng USB serial đang có dữ liệu từ cảm biến.
-        
-        Returns:
-            Cổng đang hoạt động hoặc None
-        """
-        logger.info("Tìm kiếm cổng USB serial đang hoạt động...")
-        
-        available_ports = self.find_available_ports()
-        if not available_ports:
-            logger.warning("Không tìm thấy cổng USB serial nào")
-            return None
-        
-        logger.info(f"Tìm thấy {len(available_ports)} cổng: {available_ports}")
-        
-        # Test từng cổng để tìm cổng có dữ liệu
-        for port in available_ports:
-            logger.info(f"Đang test cổng {port}...")
-            if self.test_port_with_data(port):
-                logger.info(f"Tìm thấy cổng hoạt động: {port}")
-                return port
-        
-        # Nếu không có cổng nào có dữ liệu, trả về cổng đầu tiên
-        if available_ports:
-            logger.warning(f"Không có cổng nào có dữ liệu. Sử dụng cổng đầu tiên: {available_ports[0]}")
-            return available_ports[0]
-        
-        return None
-
     def establish_connection(self) -> Optional[serial.Serial]:
         """
-        Thiết lập kết nối với cảm biến bằng logic cổng động.
+        Thiết lập kết nối với cảm biến.
 
         Returns:
             Instance serial.Serial nếu thành công, None nếu thất bại.
@@ -149,107 +58,78 @@ class SensorConnectionManager:
             # Đóng kết nối cũ nếu có
             self.close_connection()
             
-            # Tìm cổng đang hoạt động
-            active_port = self.find_active_port()
-            if not active_port:
+            # Tìm cổng có sẵn
+            available_ports = self.find_available_ports()
+            if not available_ports:
                 logger.error("Không tìm thấy cổng USB serial nào có sẵn")
                 return None
             
-            logger.info(f"Đang kết nối tới {active_port} @ {self.baudrate} bps...")
+            # Thử kết nối từng cổng
+            for port in available_ports:
+                try:
+                    logger.info(f"Đang kết nối tới {port} @ {self.baudrate} bps...")
+                    
+                    self.ser = serial.Serial(
+                        port=port,
+                        baudrate=self.baudrate,
+                        timeout=0.5,
+                        write_timeout=1.0,
+                        bytesize=serial.EIGHTBITS,
+                        parity=serial.PARITY_NONE,
+                        stopbits=serial.STOPBITS_ONE
+                    )
+                    
+                    if self.ser.is_open:
+                        self.current_port = port
+                        self.ser.reset_input_buffer()
+                        self.ser.reset_output_buffer()
+                        
+                        logger.info(f"Kết nối {port} thành công")
+                        return self.ser
+                
+                except serial.SerialException as e:
+                    logger.warning(f"Không thể kết nối {port}: {e}")
+                    continue
             
-            # Tạo kết nối
-            self.ser = serial.Serial(
-                port=active_port,
-                baudrate=self.baudrate,
-                timeout=0.5,
-                write_timeout=1.0,
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE
-            )
-            
-            if self.ser.is_open:
-                self.current_port = active_port
-                
-                # Clear buffers
-                self.ser.reset_input_buffer()
-                self.ser.reset_output_buffer()
-                
-                # Test nhanh xem có dữ liệu không
-                time.sleep(0.5)
-                if self.ser.in_waiting > 0:
-                    data = self.ser.read(self.ser.in_waiting)
-                    logger.info(f"Kết nối {active_port} thành công - nhận được {len(data)} bytes")
-                else:
-                    logger.info(f"Kết nối {active_port} thành công")
-                
-                return self.ser
-            else:
-                logger.error(f"Không thể mở cổng {active_port}")
-                return None
-
-        except serial.SerialException as e:
-            logger.error(f"Lỗi kết nối Serial: {e}")
+            logger.error("Không thể kết nối bất kỳ cổng nào")
             return None
+
         except Exception as e:
             logger.error(f"Lỗi không xác định: {e}")
             return None
 
-    def reconnect(self) -> Optional[serial.Serial]:
+    def wait_for_connection(self, check_interval: int = 5) -> Optional[serial.Serial]:
         """
-        Kết nối lại bằng cách tìm cổng hoạt động mới.
-        
-        Returns:
-            Instance serial.Serial mới nếu thành công, None nếu thất bại.
-        """
-        logger.info("Thực hiện kết nối lại...")
-        self.close_connection()
-        time.sleep(1)  # Chờ hệ thống cleanup
-        return self.establish_connection()
-
-    def auto_reconnect(self, running_flag) -> Optional[serial.Serial]:
-        """
-        Thử kết nối lại liên tục cho đến khi thành công hoặc bị dừng.
+        Đợi cho đến khi có kết nối thành công.
         
         Args:
-            running_flag: Threading event để kiểm tra có nên tiếp tục hay không
+            check_interval: Thời gian chờ giữa các lần kiểm tra (giây)
             
         Returns:
-            Instance serial.Serial mới nếu thành công, None nếu bị dừng
+            Instance serial.Serial khi có kết nối thành công
         """
-        logger.warning("Bắt đầu kết nối lại...")
+        logger.warning("Đang đợi kết nối...")
         
-        reconnect_delay = 3  # Thời gian chờ ban đầu
-        attempt_count = 0
-        
-        while running_flag.is_set():
-            attempt_count += 1
-            self.reconnection_attempts += 1
-            
+        while True:
             try:
-                new_serial = self.reconnect()
-                if new_serial and new_serial.is_open:
-                    logger.info(f"Kết nối lại thành công sau {attempt_count} lần thử! (Port: {self.current_port})")
-                    self.reconnection_attempts = 0
-                    return new_serial
+                connection = self.establish_connection()
+                if connection and connection.is_open:
+                    logger.info(f"Đã có kết nối! (Port: {self.current_port})")
+                    return connection
                 else:
-                    logger.warning(f"Kết nối lại thất bại (lần {attempt_count})")
+                    logger.info(f"Chưa có kết nối. Thử lại sau {check_interval} giây...")
+                    time.sleep(check_interval)
                     
+            except KeyboardInterrupt:
+                logger.info("Dừng đợi kết nối do người dùng hủy")
+                return None
             except Exception as e:
-                logger.error(f"Lỗi khi thử kết nối lại (lần {attempt_count}): {e}")
-            
-            logger.info(f"Thử lại sau {reconnect_delay} giây...")
-            time.sleep(reconnect_delay)
-            
-            # Tăng delay nhưng không quá 10 giây
-            reconnect_delay = min(reconnect_delay + 1, 10)
-        
-        logger.warning("Dừng thử kết nối lại do ứng dụng đang thoát.")
-        return None
+                logger.error(f"Lỗi khi đợi kết nối: {e}")
+                time.sleep(check_interval)
 
     def handle_serial_error(self, error: Exception, consecutive_failures: int, max_failures: int = 3) -> bool:
         """
-        Xử lý lỗi serial đơn giản.
+        Xử lý lỗi serial và quyết định có cần dừng không.
         
         Args:
             error: Lỗi serial xảy ra
@@ -257,16 +137,14 @@ class SensorConnectionManager:
             max_failures: Số lần thất bại tối đa
             
         Returns:
-            True nếu cần chuyển sang chế độ kết nối lại
+            True nếu cần dừng và đợi kết nối lại
         """
-        logger.error(f"Lỗi Serial (lần {consecutive_failures}): {error}")
-        
         if consecutive_failures >= max_failures:
-            logger.warning(f"Quá nhiều lỗi liên tiếp ({consecutive_failures}). Cần kết nối lại...")
+            logger.warning("Kết nối bị mất. Đang dừng và đợi kết nối lại...")
+            self.close_connection()
             return True
-        else:
-            logger.info(f"Thử lại... ({consecutive_failures}/{max_failures})")
-            return False
+        
+        return False
 
     def close_connection(self):
         """Đóng kết nối serial nếu đang mở."""

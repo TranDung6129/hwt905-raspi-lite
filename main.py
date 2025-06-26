@@ -79,8 +79,7 @@ def main():
         # 3. Quản lý kết nối cảm biến
         connection_manager = SensorConnectionManager(
             port=config.SENSOR_UART_PORT,
-            baudrate=config.SENSOR_BAUD_RATE,
-            debug=args.debug
+            baudrate=config.SENSOR_BAUD_RATE
         )
         
         # Vòng lặp chính với kết nối lại hoàn toàn
@@ -98,9 +97,10 @@ def main():
                 ser_instance = connection_manager.establish_connection()
                 
                 if not ser_instance or not ser_instance.is_open:
-                    logger.warning("Không thể kết nối tới cảm biến, thử lại sau 5 giây...")
-                    time.sleep(5)
-                    continue
+                    logger.warning("Không thể kết nối tới cảm biến, đang đợi kết nối...")
+                    ser_instance = connection_manager.wait_for_connection()
+                    if not ser_instance:
+                        break  # Người dùng hủy hoặc lỗi nghiêm trọng
                 
                 logger.info("Cảm biến đã được kết nối thành công và sẵn sàng đọc dữ liệu.")
 
@@ -113,6 +113,7 @@ def main():
                 storage_manager = StorageManager(
                     base_dir=config.STORAGE_BASE_DIR,
                     file_rotation_hours=config.STORAGE_FILE_ROTATION_HOURS,
+                    reconnection_strategy=config.STORAGE_RECONNECTION_STRATEGY,
                     fields_to_write=[
                         'timestamp', 
                         'angle_roll', 'angle_pitch', 'angle_yaw',

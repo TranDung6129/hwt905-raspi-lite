@@ -59,7 +59,9 @@ class HWT905DataDecoder:
 
     def read_raw_packet(self) -> Optional[bytes]:
         """
-        Đọc một gói dữ liệu thô từ cổng serial.
+        Đọc một gói dữ liệu thô từ cổng serial, đảm bảo tính toàn vẹn bằng cách
+        đồng bộ hóa stream và xác thực checksum.
+        Hàm này sẽ đọc liên tục cho đến khi tìm thấy một gói tin hợp lệ hoặc timeout.
         Trả về None nếu không có dữ liệu hoặc gặp lỗi.
         Raise SerialException nếu mất kết nối.
         """
@@ -67,33 +69,38 @@ class HWT905DataDecoder:
             if not self.ser or not self.ser.is_open:
                 logger.error("Cổng serial không mở hoặc đã bị đóng")
                 raise serial.SerialException("Cổng serial không khả dụng")
+
+            # Vòng lặp để đồng bộ hóa và tìm gói tin hợp lệ
+            while self.ser.is_open:
+                # 1. Tìm header 0x55
+                header_byte = self.ser.read(1)
+                if not header_byte:
+                    return None # Timeout, không có dữ liệu
+
+                if header_byte[0] == DATA_HEADER_BYTE:
+                    # 2. Đã tìm thấy header, đọc 10 byte còn lại
+                    remaining_data = self.ser.read(DATA_PACKET_LENGTH - 1)
+                    if len(remaining_data) < (DATA_PACKET_LENGTH - 1):
+                        logger.warning(f"Không đọc đủ gói tin sau header ({len(remaining_data)}/{DATA_PACKET_LENGTH - 1} bytes). Tìm lại...")
+                        continue # Quay lại tìm header tiếp
+
+                    full_packet = header_byte + remaining_data
+
+                    # 3. Xác thực gói tin
+                    if is_valid_data_packet(full_packet):
+                        if self.debug:
+                            packet_hex = ' '.join(f'{b:02X}' for b in full_packet)
+                            logger.debug(f"Gói tin hợp lệ: {packet_hex}")
+                        return full_packet # Gói tin hợp lệ, trả về
+                    else:
+                        # Checksum sai, có thể là header giả
+                        logger.warning(f"Gói tin bị hỏng (checksum sai). Bỏ qua và tìm tiếp.")
+                        # Không cần làm gì, vòng lặp sẽ tiếp tục tìm byte tiếp theo trong stream
                 
-            # Tìm header 0x55
-            header_byte = self.ser.read(1)
-            if not header_byte:
-                return None
-                
-            if header_byte[0] != 0x55:
-                if self.debug:
-                    logger.debug(f"Byte không phải header: 0x{header_byte[0]:02X}")
-                return None
-            
-            # Đọc 10 byte còn lại (tổng cộng 11 byte)
-            remaining_data = self.ser.read(10)
-            if len(remaining_data) != 10:
-                logger.warning(f"Chỉ đọc được {len(remaining_data)}/10 byte sau header")
-                return None
-            
-            full_packet = header_byte + remaining_data
-            
-            if self.debug:
-                packet_hex = ' '.join(f'{b:02X}' for b in full_packet)
-                logger.debug(f"Gói tin thô: {packet_hex}")
-            
-            return full_packet
-            
+                # Nếu byte không phải là header, vòng lặp sẽ tự động đọc byte tiếp theo
+
         except serial.SerialTimeoutException:
-            # Timeout bình thường, không phải lỗi
+            # Timeout là bình thường khi không có dữ liệu, không phải lỗi
             return None
             
         except serial.SerialException as e:

@@ -83,7 +83,6 @@ class SerialReaderThread(threading.Thread):
                         time.sleep(1)
                 else:
                     # Fallback nếu không có connection_manager
-                    logger.error(f"Lỗi (lần {consecutive_failures}): {e}")
                     if consecutive_failures >= max_consecutive_failures:
                         logger.warning("Quá nhiều lỗi liên tiếp. Dừng luồng...")
                         self.running_flag.clear()
